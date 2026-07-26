@@ -4,6 +4,8 @@ work/
 outputs/
 .env
 .env.local
+.venv/
+*.egg-info/
 *.db
 *.sqlite
 __pycache__/
