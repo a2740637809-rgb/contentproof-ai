@@ -23,3 +23,28 @@ class PromptCreate(BaseModel):
     step: str
     template: str = Field(min_length=1)
     change_note: str = ""
+
+
+class HumanReviewCreate(BaseModel):
+    decision: str = Field(pattern="^(accepted|modified|rejected)$")
+    reason_tags: list[str] = Field(default_factory=list)
+    notes: str = ""
+    final_text: str = ""
+
+
+class EvaluationPayload(BaseModel):
+    required_facts: list[str]
+    text: str
+    model_scores: dict[str, float]
+
+
+class SourceCreate(BaseModel):
+    title: str
+    url: str
+    excerpt: str = Field(max_length=180)
+    facts: list[dict]
+
+
+class RunCreate(BaseModel):
+    prompt_version_id: int
+    model_name: str
