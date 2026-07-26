@@ -26,6 +26,7 @@ from app.services.reports import render_csv_rows, render_markdown_report
 from app.services.rules import RuleEngine
 from app.services.workflow import PersistentWorkflowService
 from app.providers.ollama import OllamaProvider
+from app.providers.base import ModelRequest
 from app.config import get_settings
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -345,24 +346,142 @@ def evaluate_run(
     task = session.get(ContentTask, run.task_id) if run else None
     if task is None:
         raise HTTPException(404, "run not found")
+    adapt = session.scalar(
+        select(WorkflowStep).where(
+            WorkflowStep.run_id == run_id, WorkflowStep.name == "adapt"
+        )
+    )
+    text_value = data.text or (
+        adapt.output_json.get("text", "") if adapt is not None else ""
+    )
+    sources = session.scalars(
+        select(SourceRecord).where(
+            SourceRecord.task_id == task.id, SourceRecord.status == "verified"
+        )
+    ).all()
+    required_facts = data.required_facts or [
+        fact["text"]
+        for source in sources
+        for fact in source.facts
+        if fact.get("status", "verified") == "verified" and fact.get("text")
+    ]
+    if not text_value:
+        raise HTTPException(409, "run has no completed adapt output")
     rules = RuleEngine().evaluate(
-        data.text,
-        data.required_facts,
+        text_value,
+        required_facts,
         task.banned_phrases,
         task.min_words,
         task.max_words,
     )
-    result = EvaluationService().combine(rules, data.model_scores)
+    model_scores = data.model_scores
+    if model_scores is None:
+        settings = get_settings()
+        provider = OllamaProvider(settings.ollama_base_url, settings.ollama_model)
+        schema = {
+            "type": "object",
+            "properties": {
+                name: {
+                    "type": "object",
+                    "properties": {
+                        "score": {"type": "number"},
+                        "reason": {"type": "string"},
+                        "evidence": {"type": "array", "items": {"type": "string"}},
+                    },
+                    "required": ["score", "reason", "evidence"],
+                }
+                for name in EvaluationService.weights
+            },
+            "required": list(EvaluationService.weights),
+        }
+        try:
+            generated = provider.generate(
+                ModelRequest(
+                    prompt=(
+                        "按五个固定维度评测以下内容。每项给0-100分、简短理由和文本证据。"
+                        f"\n内容：{text_value}\n硬规则：{rules.model_dump_json()}"
+                    ),
+                    schema=schema,
+                    temperature=0,
+                )
+            )
+            model_scores = generated.data
+        except Exception as exc:
+            raise HTTPException(
+                409,
+                {
+                    "message": "本地模型暂不可用",
+                    "action": "启动 Ollama，或切换到演示模式",
+                    "rule_evidence": rules.model_dump(),
+                    "error": str(exc),
+                },
+            ) from exc
+    result = EvaluationService().combine(rules, model_scores)
     session.add(
         Evaluation(
             run_id=run_id,
-            scores=result.scores,
+            scores={
+                name: value.model_dump()
+                for name, value in result.dimensions.items()
+            },
             total_score=result.total,
             advisory=True,
         )
     )
     session.commit()
     return result.model_dump()
+
+
+@runs_router.get("/{run_id}/evidence.json")
+def export_evidence(run_id: int, session: Session = Depends(get_session)) -> dict:
+    run = session.get(WorkflowRun, run_id)
+    task = session.get(ContentTask, run.task_id) if run else None
+    if task is None:
+        raise HTTPException(404, "run not found")
+    prompt = session.get(PromptVersion, run.prompt_version_id)
+    sources = session.scalars(
+        select(SourceRecord).where(SourceRecord.task_id == task.id)
+    ).all()
+    steps = session.scalars(
+        select(WorkflowStep)
+        .where(WorkflowStep.run_id == run_id)
+        .order_by(WorkflowStep.position)
+    ).all()
+    evaluation = session.scalar(
+        select(Evaluation).where(Evaluation.run_id == run_id)
+    )
+    review = session.scalar(
+        select(HumanReview).where(HumanReview.run_id == run_id)
+    )
+    return {
+        "task": task_dict(task),
+        "sources": [source_dict(source) for source in sources],
+        "prompt": {
+            "id": prompt.id,
+            "name": prompt.name,
+            "version": prompt.version,
+            "template": prompt.template,
+        }
+        if prompt
+        else None,
+        "run": get_run(run_id, session),
+        "evaluation": {
+            "id": evaluation.id,
+            "total": evaluation.total_score,
+            "dimensions": evaluation.scores,
+            "advisory": evaluation.advisory,
+        }
+        if evaluation
+        else None,
+        "review": {
+            "decision": review.decision,
+            "reason_tags": review.reason_tags,
+            "notes": review.notes,
+            "final_text": review.final_text,
+        }
+        if review
+        else None,
+    }
 
 
 @runs_router.post("/{run_id}/reviews", status_code=201)

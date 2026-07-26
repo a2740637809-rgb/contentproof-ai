@@ -45,9 +45,9 @@ class HumanReviewCreate(BaseModel):
 
 
 class EvaluationPayload(BaseModel):
-    required_facts: list[str]
-    text: str
-    model_scores: dict[str, float]
+    required_facts: list[str] | None = None
+    text: str | None = None
+    model_scores: dict[str, float | dict] | None = None
 
 
 class SourceCreate(BaseModel):

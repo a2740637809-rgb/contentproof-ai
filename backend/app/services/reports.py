@@ -18,7 +18,11 @@ def render_markdown_report(
         "",
         "## 分项得分",
     ]
-    lines.extend(f"- {name}: {score}" for name, score in scores.items())
+    for name, score in scores.items():
+        if isinstance(score, dict):
+            lines.append(f"- {name}: {score.get('score')} — {score.get('reason', '')}")
+        else:
+            lines.append(f"- {name}: {score}")
     return "\n".join(lines) + "\n"
 
 
