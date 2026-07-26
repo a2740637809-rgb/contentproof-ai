@@ -2,9 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.db import Base, engine
+from app import models  # noqa: F401
 
 
 def create_app() -> FastAPI:
+    Base.metadata.create_all(engine)
     app = FastAPI(title="ContentProof AI", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -18,4 +21,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
