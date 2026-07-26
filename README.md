@@ -1,12 +1,41 @@
-# ContentProof AI
+# SignalProof Studio
 
-> 让 AI 内容的每个结论都有来源、评测与人工决定。
+> 把零散的用户声音，变成有原话证据、可评测、可复现的内容决策。
 
-ContentProof AI 是面向内容团队的本地优先质量实验室。它解决的不是“再生成一篇文章”，而是 AI 内容进入真实生产后最难回答的问题：**事实从哪里来、提示词是否真的变好、模型为什么给这个分、最终由谁承担发布决定。**
+[在线体验](https://a2740637809-rgb.github.io/contentproof-ai/) · [产品设计](docs/superpowers/specs/2026-07-27-signalproof-flagship-design.md) · [系统架构](docs/architecture.md) · [研究依据](docs/benchmark-research.md)
 
-[在线体验](https://a2740637809-rgb.github.io/contentproof-ai/) · [使用指南](docs/user-guide.md) · [系统设计](docs/architecture.md)
+![SignalProof Studio：信号河流](docs/assets/signalproof-desktop.png)
 
-## 30 秒体验
+## 为什么做
+
+AI 写作工具解决了“生成更快”，却没有解决内容团队更昂贵的问题：用户到底在抱怨什么？哪一个最值得优先解决？一条内容结论来自哪项证据？Prompt 改版是真的更好，还是看起来更顺眼？
+
+SignalProof 把原先分散的 VoiceMap 反馈洞察与 ContentProof 内容评测合并为一个产品闭环：
+
+```text
+反馈/评论 → 隐私脱敏 → 可解释聚类 → 机会评分 → 内容简报
+                                            ↓
+人工决策 ← 对照评测 ← Prompt 实验 ← 事实来源
+    └────────────────── 回流为下一轮信号
+```
+
+## 核心能力
+
+- **信号分析**：按主题、频次、负面情绪与业务影响形成机会排序。
+- **原话追溯**：每个聚类保留 `F002` 这类证据 ID，不把摘要冒充用户原话。
+- **简报生成**：把最高机会转换成问题、受众、证据、假设与成功指标。
+- **内容实验**：固定任务与事实集，对照 Prompt A/B 的准确性、来源覆盖率与平台适配。
+- **人工终审**：模型只辅助评分，最终接受、修改或退回由人决定。
+- **本地优先**：FastAPI + SQLite + Ollama；公开演示无需密钥。
+
+## 90 秒体验
+
+1. 打开[在线演示](https://a2740637809-rgb.github.io/contentproof-ai/)。
+2. 在“信号河流”切换机会节点，查看对应原话证据。
+3. 创建内容简报，进入内容实验。
+4. 对比基线 Prompt 与证据约束 Prompt，完成人工决策闭环。
+
+## 本地运行
 
 ```bash
 cd frontend
@@ -14,72 +43,46 @@ npm install
 npm run dev
 ```
 
-打开页面后选择“立即体验示例”，无需模型或密钥即可走通来源、工作流、实验、评测与终审。
-
-## 产品闭环
-
-| 用户痛点 | ContentProof 的解决方式 |
-|---|---|
-| AI 成稿无法证明事实依据 | 来源卡片、事实状态与原始链接 |
-| Prompt 修改依赖主观感觉 | 固定数据集上的版本对照与分数变化 |
-| 运行失败后无法定位 | 四步轨迹、输入输出、耗时和单步重试 |
-| 总分看似专业但不可解释 | 五维理由、文本证据和硬规则结果 |
-| 模型替代了编辑责任 | accepted / modified / rejected 人工终审 |
-| 项目演示依赖本机环境 | 浏览器演示模式 + Ollama 本地完整模式 |
-
-## 两种运行模式
-
-- **演示数据**：纯浏览器运行，不上传内容；适合招聘方快速体验。
-- **本地模型**：FastAPI + SQLite + Ollama；提示词、运行轨迹和审核证据留在设备。
+后端与本地模型：
 
 ```bash
 ollama serve
-ollama pull qwen2:1.5b
-
+ollama pull qwen2.5:7b
 cd backend
 py -3.12 -m venv .venv
 .\.venv\Scripts\pip install -e ".[dev]"
 .\.venv\Scripts\uvicorn app.main:app --reload
 ```
 
-## 架构
+`POST /api/signals/analyze` 接收多渠道反馈，返回脱敏证据、信号聚类、机会分与内容简报。
 
-```text
-公开来源 → 事实卡 → Prompt 版本 → 持久化工作流
-                                  ↓
-人工终审 ← 证据导出 ← 硬规则 + 模型五维评测
-```
+## 技术取舍
 
-- React + TypeScript + Vite：六个可操作产品页面和响应式交互
-- FastAPI + SQLAlchemy + SQLite：任务、来源、提示词、运行、评测、审核
-- Ollama：结构化本地生成与模型辅助评测
-- Pytest + Vitest + Playwright：后端、组件、桌面/手机完整流程验证
-
-## 隐私与版权
-
-示例仅保存公开页面的元数据、原始链接、短摘要和原创标注，不复制文章全文或原图。演示模式不会请求访客本地 Ollama，也不会将用户内容发送到远程服务器。模型评分只提供建议，最终判断保留给人工审核。
-
-## 项目边界
-
-当前版本服务单机内容实验，不包含账号体系、多人协作、自动发布和通用拖拽编排器。明确边界让项目能围绕“内容可信度与质量闭环”持续迭代。
+| 选择 | 原因 |
+|---|---|
+| React + TypeScript + SVG | 信号地图可交互、可访问、无需重型图形依赖 |
+| FastAPI + Pydantic | 聚类与简报结构可验证，接口自动生成文档 |
+| 确定性规则 + 可选 LLM | 演示可复现；模型不可用时核心链路仍工作 |
+| SQLite + Ollama | 未发布素材与运行轨迹可留在设备 |
+| Pytest + Vitest + Playwright | 覆盖服务、组件、桌面与手机完整路径 |
 
 ## 验证
 
 ```bash
-cd backend
-python -m pytest tests -q
-
+cd backend && python -m pytest tests -q
 cd ../frontend
-npm test
+npm test -- --run
 npm run build
 npm run test:e2e
 ```
 
+当前边界：单机产品原型，不包含账号、计费、多人实时协作与自动发布。示例反馈为产品演示数据，不代表真实统计研究。
+
 ## Roadmap
 
-- 评测数据集导入与批量回归
-- 更多本地模型提供方
-- 评测失败样本聚类
-- 可分享的脱敏证据报告
+- CSV/JSON 反馈导入与大样本虚拟化
+- 聚类合并、拆分与人工命名
+- 评测数据集版本管理与失败样本回归
+- 脱敏证据包导出与分享
 
-欢迎通过 Issue 提交真实内容质量场景与失败案例。
+欢迎通过 Issue 提交真实的内容运营痛点、失败样本或产品建议。

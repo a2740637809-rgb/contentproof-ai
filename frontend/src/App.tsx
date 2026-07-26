@@ -1,93 +1,76 @@
-import { FormEvent, useMemo, useState } from "react";
-import { DemoRepository } from "./demoRepository";
-import type { Mode, Page, Run, Source, Step } from "./types";
+import { useMemo, useState } from "react";
 import "./styles.css";
 
-const labels: Record<Page, string> = {
-  dashboard: "实验总览", sources: "事实来源", workflow: "内容工作流",
-  experiments: "提示词实验", evaluations: "质量评测", review: "人工终审",
-};
-const dimensionNames: Record<string, string> = {
-  factual_accuracy: "事实准确性", structure: "结构完整性", readability: "可读性",
-  platform_fit: "平台适配", risk_control: "风险控制",
-};
+type View = "signals" | "brief" | "experiment";
+const feedback = [
+  { id: "F001", channel: "访谈", quote: "生成得很快，但内容像模板，放到哪个账号都一样。" },
+  { id: "F002", channel: "客服", quote: "最怕事实写错，也看不到这句话到底从哪里来的。" },
+  { id: "F003", channel: "问卷", quote: "模型一慢或者失败，整个流程就只能重新来。" },
+  { id: "F004", channel: "社群", quote: "希望把多个平台版本和审核记录一次导出。" },
+  { id: "F005", channel: "访谈", quote: "未发布素材不能离开电脑，隐私是底线。" },
+];
+const clusters = [
+  { name: "事实可信", count: 8, score: 92, evidence: ["F002", "F009", "F013"], color: "coral" },
+  { name: "表达同质化", count: 6, score: 81, evidence: ["F001", "F006"], color: "amber" },
+  { name: "流程韧性", count: 4, score: 68, evidence: ["F003"], color: "blue" },
+  { name: "协作交付", count: 3, score: 57, evidence: ["F004"], color: "violet" },
+  { name: "本地隐私", count: 3, score: 53, evidence: ["F005"], color: "green" },
+];
 
 export default function App() {
-  const repo = useMemo(() => new DemoRepository(), []);
-  const [mode, setMode] = useState<Mode | null>(null);
-  const [page, setPage] = useState<Page>("dashboard");
-  const [task, setTask] = useState(repo.task);
-  const [run, setRun] = useState<Run | null>(null);
-  const [toast, setToast] = useState("");
-  const [review, setReview] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [view, setView] = useState<View>("signals");
+  const [selected, setSelected] = useState("事实可信");
+  const active = useMemo(() => clusters.find((item) => item.name === selected) ?? clusters[0], [selected]);
+  const createBrief = () => { setSelected("事实可信"); setView("brief"); };
 
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2400); };
-  if (!mode) return <ConnectionGate onSelect={setMode} />;
-
-  const execute = async () => {
-    setBusy(true); notify(mode === "demo" ? "正在运行演示工作流" : "正在提交本地模型");
-    if (mode === "demo") {
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-      const next = await repo.run(); setRun(next); setTask({ ...repo.task });
-      notify("四个步骤已完成");
-    } else {
-      try {
-        const response = await fetch("http://127.0.0.1:8000/api/health");
-        if (!response.ok) throw new Error();
-        notify("本地服务连接成功，请在任务中创建运行");
-      } catch { notify("未连接本地服务：请运行后端与 ollama serve"); }
-    }
-    setBusy(false);
-  };
-  const addSource = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); const data = new FormData(event.currentTarget);
-    const source = await repo.addSource({
-      title: String(data.get("title")), url: String(data.get("url")),
-      excerpt: String(data.get("excerpt")), status: "pending", facts: [],
-    });
-    setTask({ ...repo.task }); notify(`来源“${source.title}”已保存`); event.currentTarget.reset();
-  };
-  const reset = async () => { await repo.reset(); setTask({ ...repo.task }); setRun(null); setReview(null); notify("演示数据已重置"); };
-
-  return (
-    <div className="product-shell">
-      <aside className="nav-panel">
-        <div className="brand"><span>CP</span><div><small>内容证据台</small><strong>ContentProof</strong></div></div>
-        <nav aria-label="产品导航">{(Object.keys(labels) as Page[]).map((key, index) =>
-          <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)}>
-            <i>0{index + 1}</i>{labels[key]}
-          </button>)}</nav>
-        <div className="mode-card"><b>{mode === "demo" ? "演示数据" : "本地模型"}</b><small>{mode === "demo" ? "浏览器内运行，不上传内容" : "FastAPI + Ollama"}</small></div>
-      </aside>
-      <main className="main-panel">
-        <header><div><p className="eyebrow">AI CONTENT QUALITY LAB</p><h1>{labels[page]}</h1><p>{task.title}</p></div><div className="header-actions"><button onClick={reset}>重置演示</button><span>{mode === "demo" ? "演示数据" : "本地模型"}</span></div></header>
-        {page === "dashboard" && <Dashboard task={task} onStart={() => setPage("workflow")} />}
-        {page === "sources" && <Sources task={task} onSubmit={addSource} />}
-        {page === "workflow" && <Workflow run={run ?? task.runs[0] ?? null} busy={busy} onRun={execute} />}
-        {page === "experiments" && <Experiments />}
-        {page === "evaluations" && <Evaluations />}
-        {page === "review" && <Review decision={review} onReview={(value) => { setReview(value); notify("审核决定已保存"); }} onExport={() => downloadEvidence(task, run)} />}
-      </main>
-      {toast && <div role="status" className="toast">{toast}</div>}
-    </div>
-  );
+  return <div className="app-shell">
+    <a className="skip-link" href="#main-content">跳到主要内容</a>
+    <header className="topbar">
+      <a className="brand" href="#main-content" aria-label="SignalProof 首页" translate="no"><span className="brand-mark" aria-hidden="true"><i/><i/><i/></span><span>SignalProof <b>Studio</b></span></a>
+      <nav aria-label="主要导航">
+        <button className={view === "signals" ? "active" : ""} onClick={() => setView("signals")}>信号</button>
+        <button className={view === "brief" ? "active" : ""} onClick={() => setView("brief")}>简报</button>
+        <button className={view === "experiment" ? "active" : ""} onClick={() => setView("experiment")}>实验</button>
+      </nav>
+      <span className="demo-badge" translate="no"><i aria-hidden="true"/> PUBLIC DEMO</span>
+    </header>
+    {view === "signals" && <main id="main-content">
+      <section className="hero">
+        <div><p className="kicker">AUDIENCE SIGNAL → CONTENT DECISION</p><h1>把用户声音变成<br/><em>可验证</em>的内容决策。</h1><p className="hero-copy">从零散评论中识别真实痛点，保留每条原话证据，再把最高价值的信号推进为可评测的内容实验。</p>
+          <div className="hero-actions"><button className="primary" onClick={createBrief}>从最高机会创建内容简报 <span>↗</span></button><a href="#river">查看信号地图 ↓</a></div>
+        </div>
+        <aside className="snapshot"><p>本次分析 / RUN 024</p><strong>24</strong><span>条原始反馈</span><dl><div><dt>5</dt><dd>主题信号</dd></div><div><dt>3</dt><dd>反馈渠道</dd></div><div><dt>100%</dt><dd>可追溯</dd></div></dl></aside>
+      </section>
+      <section className="river-section" id="river">
+        <div className="section-heading"><div><p className="kicker">SIGNAL CARTOGRAPHY</p><h2>信号河流</h2></div><p>线条越宽，出现频次越高；节点分值综合频次、负面情绪与业务影响。点击节点查看证据。</p></div>
+        <div className="river-layout">
+          <div className="feedback-stack" aria-label="原始反馈">{feedback.map((item) => <article key={item.id}><div><code>{item.id}</code><span>{item.channel}</span></div><p>“{item.quote}”</p></article>)}</div>
+          <div className="flow-map" aria-label="反馈聚类信号图">
+            <svg viewBox="0 0 460 440" role="img" aria-label="反馈流向五个内容机会">
+              <path className="flow coral" d="M0 45 C155 45 165 74 300 74"/><path className="flow amber" d="M0 126 C145 126 176 148 300 148"/><path className="flow blue" d="M0 207 C155 207 164 222 300 222"/><path className="flow violet" d="M0 288 C155 288 172 296 300 296"/><path className="flow green" d="M0 369 C150 369 176 370 300 370"/>
+              {clusters.map((cluster,index) => <g key={cluster.name} className={`node ${cluster.color} ${selected === cluster.name ? "selected" : ""}`}><circle cx="340" cy={74+index*74} r={selected === cluster.name ? 35 : 28}/><text x="340" y={79+index*74} textAnchor="middle">{cluster.score}</text></g>)}
+            </svg>
+            <div className="cluster-labels">{clusters.map(cluster => <button key={cluster.name} onClick={() => setSelected(cluster.name)}><b>{cluster.name}</b><span>{cluster.count} 次提及</span></button>)}</div>
+          </div>
+          <aside className={`evidence-panel ${active.color}`}><p className="kicker">SELECTED SIGNAL</p><div className="signal-score"><strong>{active.score}</strong><span>/ 100<br/>机会分</span></div><h3>{active.name}</h3><p>用户需要的不只是更快生成，而是能解释“为什么可信”的内容工作流。</p><div className="evidence-list">{active.evidence.map(id => <span key={id}>证据 {id}</span>)}</div><button onClick={createBrief}>创建内容简报 →</button></aside>
+        </div>
+      </section>
+    </main>}
+    {view === "brief" && <main className="workspace" id="main-content">
+      <div className="workspace-title"><div><p className="kicker">OPPORTUNITY → BRIEF</p><h1>内容机会简报</h1></div><span className="success">✓ 简报已创建</span></div>
+      <div className="brief-grid">
+        <section className="brief-card lead"><span className="index">01 / PROBLEM</span><h2>内容生产提速后，团队仍无法证明 AI 输出为什么可信。</h2><p>目标不是再做一个写作按钮，而是让来源、提示词、评测与人工决策形成完整证据链。</p></section>
+        <section className="brief-card"><span className="index">02 / AUDIENCE</span><h3>内容运营与编辑团队</h3><p>高频生产、多平台交付，同时承担事实准确与品牌风险。</p></section>
+        <section className="brief-card"><span className="index">03 / EVIDENCE</span><h3>证据 F002</h3><blockquote>“最怕事实写错，也看不到这句话到底从哪里来的。”</blockquote><a href="#evidence">查看原始上下文 ↗</a></section>
+        <section className="brief-card"><span className="index">04 / HYPOTHESIS</span><h3>如果每个结论都显示来源与评测理由，用户会更愿意进入人工终审。</h3><p>成功指标：事实准确性 ≥ 90，来源覆盖率 = 100%，人工接受率提升。</p></section>
+      </div>
+      <div className="workspace-actions"><button onClick={() => setView("signals")}>← 返回信号地图</button><button className="primary" onClick={() => setView("experiment")}>进入内容实验 ↗</button></div>
+    </main>}
+    {view === "experiment" && <main className="workspace" id="main-content">
+      <div className="workspace-title"><div><p className="kicker">BRIEF → EVALUATION</p><h1>内容实验</h1></div><span className="run-label">RUN / 024</span></div>
+      <section className="experiment-board"><div className="experiment-head"><span>同一任务与事实集</span><b>Prompt A / 基线</b><b>Prompt B / 证据约束</b></div><div className="experiment-row"><span>事实准确性</span><strong>76</strong><strong className="winner">94 <i>+18</i></strong></div><div className="experiment-row"><span>来源覆盖率</span><strong>40%</strong><strong className="winner">100% <i>+60</i></strong></div><div className="experiment-row"><span>平台适配</span><strong>82</strong><strong>88 <i>+6</i></strong></div><div className="experiment-row decision"><span>人工决策</span><p>退回：缺少出处</p><p className="accepted">接受 B：证据完整</p></div></section>
+      <aside className="trace-note"><span>可复现记录</span><p>数据集 DS-024 · 模型 qwen2.5:7b · 温度 0.2 · 评测规则 EV-03</p></aside>
+      <div className="workspace-actions"><button onClick={() => setView("brief")}>← 返回简报</button><button className="primary" onClick={() => setView("signals")}>完成决策闭环 ✓</button></div>
+    </main>}
+  </div>;
 }
-
-function ConnectionGate({ onSelect }: { onSelect: (mode: Mode) => void }) {
-  return <main className="gate"><p className="eyebrow">LOCAL-FIRST / EVIDENCE-DRIVEN</p><h1>让 AI 内容的每个结论<br />都有来源、评测与人工决定。</h1><p>面向内容团队的质量实验室：从事实卡片到提示词对照、模型评测和终审证据包。</p><div className="gate-options"><button onClick={() => onSelect("demo")}><b>立即体验示例</b><span>无需安装，完整走通产品流程</span></button><button onClick={() => onSelect("live")}><b>连接本地模型</b><span>FastAPI + Ollama，数据留在设备</span></button></div></main>;
-}
-function Dashboard({ task, onStart }: { task: DemoRepository["task"]; onStart: () => void }) {
-  return <><section className="metrics"><article><span>来源卡片</span><b>{task.sources.length}</b><small>{task.sources.filter(s => s.status === "verified").length} 条已核验</small></article><article><span>实验运行</span><b>{Math.max(task.runs.length, 2)}</b><small>Prompt v2 较 v1 +9.5</small></article><article><span>当前质量</span><b>88.0</b><small>模型辅助评分</small></article><article><span>人工决定</span><b>1/2</b><small>仍有一条待终审</small></article></section><section className="card hero-card"><div><p className="eyebrow">PRODUCT PROBLEM</p><h2>AI 写得快，但团队无法证明它为什么可信。</h2><p>ContentProof 把来源、生成轨迹、硬规则、模型评分和人工决定串成同一条证据链。</p><button className="primary" onClick={onStart}>运行完整证据工作流</button></div><ol><li><b>01</b>公开来源转事实卡</li><li><b>02</b>提示词版本可对照</li><li><b>03</b>每一步输出可追踪</li><li><b>04</b>人工终审可导出</li></ol></section></>;
-}
-function Sources({ task, onSubmit }: { task: DemoRepository["task"]; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <div className="two-col"><section className="card"><h2>来源库</h2>{task.sources.map(source => <article className="source" key={source.id}><div><span className={`pill ${source.status}`}>{source.status === "verified" ? "已核验" : "待核验"}</span><h3>{source.title}</h3><p>{source.excerpt}</p></div><a href={source.url} target="_blank" rel="noreferrer">查看原始页面 ↗</a></article>)}</section><form className="card form-card" onSubmit={onSubmit}><h2>添加公开来源</h2><label>来源标题<input name="title" required /></label><label>原始链接<input name="url" type="url" required /></label><label>短摘要<textarea name="excerpt" maxLength={180} required /></label><p className="rights">仅保存公开元数据、链接和短摘要，不复制全文与原图。</p><button className="primary">保存来源</button></form></div>;
-}
-function Workflow({ run, busy, onRun }: { run: Run | null; busy: boolean; onRun: () => void }) {
-  const steps: Step[] = run?.steps ?? ["facts", "outline", "draft", "adapt"].map(name => ({ name, status: "pending", output_json: {}, error: "" }));
-  return <><section className="card action-bar"><div><h2>来源到成稿</h2><p>每步立即落库；下游失败不会抹掉已完成证据。</p></div><button className="primary" disabled={busy} onClick={onRun}>{busy ? "正在执行…" : "运行工作流"}</button></section><section className="step-grid">{steps.map((step, index) => <article className={`card step ${step.status}`} key={step.name}><span>0{index + 1}</span><h3>{{ facts: "事实抽取", outline: "内容提纲", draft: "初稿生成", adapt: "平台改写" }[step.name]}</h3><b>{step.status === "completed" ? "已完成" : step.status === "failed" ? "失败" : "等待中"}</b><small>{step.elapsed_ms ? `${step.elapsed_ms} ms` : "尚未运行"}</small><pre>{String(step.output_json.text ?? "运行后显示结构化输出")}</pre></article>)}</section></>;
-}
-function Experiments() { return <section className="card"><div className="section-title"><div><h2>提示词 A/B 实验</h2><p>同一数据集、同一模型，只改变提示词约束。</p></div><span className="pill verified">2 个版本</span></div><div className="experiment"><b>评测项</b><b>Prompt v1</b><b>Prompt v2</b><b>变化</b><b>人工决定</b></div><div className="experiment"><span>端午反诈活动稿</span><span>78.5</span><span>88.0</span><strong>+9.5</strong><span>接受 v2</span></div><div className="experiment"><span>数字与机构核验</span><span>82.0</span><span>91.0</span><strong>+9.0</strong><span>通过</span></div></section>; }
-function Evaluations() { const evaluation = new DemoRepository().evaluation; return <section className="evaluation-grid"><article className="score-card"><p>QUALITY GATE</p><strong>{evaluation.total}</strong><span>/ 100</span><small>模型辅助评分，仅供参考</small></article>{Object.entries(evaluation.dimensions).map(([name, item]) => <article className="card dimension" key={name}><div><h3>{dimensionNames[name]}</h3><b>{item.score}</b></div><progress max="100" value={item.score} /><p>{item.reason}</p><ul>{item.evidence.map(e => <li key={e}>{e}</li>)}</ul></article>)}</section>; }
-function Review({ decision, onReview, onExport }: { decision: string | null; onReview: (value: string) => void; onExport: () => void }) { return <div className="two-col"><section className="card"><h2>终稿预览</h2><textarea defaultValue="端午将至，常德一场安全宣传活动把反诈与禁毒知识融入节日互动。" /><p className="rights">人工决定始终高于模型评分。</p></section><section className="card review-actions"><h2>人工终审</h2><p>当前决定：<b>{decision ?? "待审核"}</b></p><button onClick={() => onReview("accepted")}>接受终稿</button><button onClick={() => onReview("modified")}>修改后接受</button><button onClick={() => onReview("rejected")}>退回重做</button><button className="primary" onClick={onExport}>导出证据 JSON</button></section></div>; }
-function downloadEvidence(task: DemoRepository["task"], run: Run | null) { const blob = new Blob([JSON.stringify({ mode: "demo", task, run, evaluation: new DemoRepository().evaluation }, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "contentproof-evidence.json"; link.click(); URL.revokeObjectURL(link.href); }

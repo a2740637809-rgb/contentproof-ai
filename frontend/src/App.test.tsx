@@ -1,30 +1,23 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-
 import App from "./App";
 
 afterEach(cleanup);
 
-describe("ContentProof product", () => {
-  it("enters demo mode and exposes six functional areas", () => {
+describe("SignalProof flagship", () => {
+  it("explains one signal-to-decision product", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /立即体验示例/ }));
-
-    expect(screen.getAllByText("演示数据").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: /事实来源/ })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /内容工作流/ })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /提示词实验/ })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /质量评测/ })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /人工终审/ })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "把用户声音变成 可验证 的内容决策。" })).toBeInTheDocument();
+    expect(screen.getByText("信号河流")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "从最高机会创建内容简报 ↗" })).toBeEnabled();
   });
 
-  it("runs the demo workflow", async () => {
+  it("creates a brief with evidence and advances to the experiment", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: /立即体验示例/ }));
-    fireEvent.click(screen.getByRole("button", { name: /内容工作流/ }));
-    fireEvent.click(screen.getByRole("button", { name: "运行工作流" }));
-
-    expect(await screen.findByText("四个步骤已完成", {}, { timeout: 2000 })).toBeInTheDocument();
-    expect(screen.getAllByText("已完成")).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button", { name: "从最高机会创建内容简报 ↗" }));
+    expect(screen.getByText("✓ 简报已创建")).toBeInTheDocument();
+    expect(screen.getByText("证据 F002")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "进入内容实验 ↗" }));
+    expect(screen.getByRole("heading", { name: "内容实验" })).toBeInTheDocument();
   });
 });
