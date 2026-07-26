@@ -1,0 +1,12 @@
+.superpowers/
+work/
+outputs/
+.env
+.env.local
+*.db
+*.sqlite
+__pycache__/
+.pytest_cache/
+node_modules/
+dist/
+
