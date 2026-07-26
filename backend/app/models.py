@@ -35,6 +35,7 @@ class SourceRecord(Base):
     url: Mapped[str]
     excerpt: Mapped[str] = mapped_column(Text)
     facts: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(default="pending")
 
 
 class PromptVersion(Base):

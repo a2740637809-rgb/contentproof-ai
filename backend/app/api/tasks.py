@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -17,7 +17,9 @@ from app.schemas import (
     HumanReviewCreate,
     RunCreate,
     SourceCreate,
+    SourceUpdate,
     TaskCreate,
+    TaskUpdate,
 )
 from app.services.evaluator import EvaluationService
 from app.services.reports import render_csv_rows, render_markdown_report
@@ -30,10 +32,121 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 runs_router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 
+def task_dict(task: ContentTask) -> dict:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "content_type": task.content_type,
+        "target_platform": task.target_platform,
+        "audience": task.audience,
+        "tone": task.tone,
+        "min_words": task.min_words,
+        "max_words": task.max_words,
+        "banned_phrases": task.banned_phrases,
+        "status": task.status,
+        "created_at": task.created_at,
+    }
+
+
+def source_dict(source: SourceRecord) -> dict:
+    return {
+        "id": source.id,
+        "task_id": source.task_id,
+        "title": source.title,
+        "url": source.url,
+        "excerpt": source.excerpt,
+        "facts": source.facts,
+        "status": source.status,
+    }
+
+
+def run_dict(run: WorkflowRun) -> dict:
+    return {
+        "id": run.id,
+        "task_id": run.task_id,
+        "prompt_version_id": run.prompt_version_id,
+        "model_name": run.model_name,
+        "status": run.status,
+    }
+
+
+@router.get("")
+def list_tasks(session: Session = Depends(get_session)) -> list[dict]:
+    tasks = session.scalars(
+        select(ContentTask).order_by(ContentTask.created_at.desc(), ContentTask.id.desc())
+    ).all()
+    return [task_dict(task) for task in tasks]
+
+
 @router.post("", status_code=201)
 def create_task(data: TaskCreate, session: Session = Depends(get_session)) -> dict:
     task = TaskRepository(session).create_task(data)
-    return {"id": task.id, "title": task.title, "status": task.status}
+    return task_dict(task)
+
+
+@router.get("/{task_id}")
+def get_task(task_id: int, session: Session = Depends(get_session)) -> dict:
+    task = session.get(ContentTask, task_id)
+    if task is None:
+        raise HTTPException(404, "task not found")
+    sources = session.scalars(
+        select(SourceRecord)
+        .where(SourceRecord.task_id == task_id)
+        .order_by(SourceRecord.id)
+    ).all()
+    runs = session.scalars(
+        select(WorkflowRun)
+        .where(WorkflowRun.task_id == task_id)
+        .order_by(WorkflowRun.id.desc())
+    ).all()
+    return {
+        **task_dict(task),
+        "sources": [source_dict(source) for source in sources],
+        "runs": [run_dict(run) for run in runs],
+    }
+
+
+@router.patch("/{task_id}")
+def update_task(
+    task_id: int, data: TaskUpdate, session: Session = Depends(get_session)
+) -> dict:
+    task = session.get(ContentTask, task_id)
+    if task is None:
+        raise HTTPException(404, "task not found")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(task, field, value)
+    if task.max_words < task.min_words:
+        raise HTTPException(422, "max_words must be greater than or equal to min_words")
+    session.commit()
+    session.refresh(task)
+    return task_dict(task)
+
+
+@router.delete("/{task_id}", status_code=204)
+def delete_task(
+    task_id: int,
+    force: bool = False,
+    session: Session = Depends(get_session),
+) -> Response:
+    task = session.get(ContentTask, task_id)
+    if task is None:
+        raise HTTPException(404, "task not found")
+    run_ids = list(
+        session.scalars(
+            select(WorkflowRun.id).where(WorkflowRun.task_id == task_id)
+        ).all()
+    )
+    if run_ids and not force:
+        raise HTTPException(409, "task owns runs; pass force=true to delete")
+    if run_ids:
+        session.execute(delete(Evaluation).where(Evaluation.run_id.in_(run_ids)))
+        session.execute(delete(HumanReview).where(HumanReview.run_id.in_(run_ids)))
+        session.execute(delete(WorkflowStep).where(WorkflowStep.run_id.in_(run_ids)))
+        session.execute(delete(WorkflowRun).where(WorkflowRun.id.in_(run_ids)))
+    session.execute(delete(SourceRecord).where(SourceRecord.task_id == task_id))
+    session.delete(task)
+    session.commit()
+    return Response(status_code=204)
 
 
 @router.post("/{task_id}/sources", status_code=201)
@@ -46,7 +159,44 @@ def create_source(
     session.add(source)
     session.commit()
     session.refresh(source)
-    return {"id": source.id, "task_id": source.task_id}
+    return source_dict(source)
+
+
+@router.patch("/{task_id}/sources/{source_id}")
+def update_source(
+    task_id: int,
+    source_id: int,
+    data: SourceUpdate,
+    session: Session = Depends(get_session),
+) -> dict:
+    source = session.scalar(
+        select(SourceRecord).where(
+            SourceRecord.id == source_id, SourceRecord.task_id == task_id
+        )
+    )
+    if source is None:
+        raise HTTPException(404, "source not found")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(source, field, value)
+    session.commit()
+    session.refresh(source)
+    return source_dict(source)
+
+
+@router.delete("/{task_id}/sources/{source_id}", status_code=204)
+def delete_source(
+    task_id: int, source_id: int, session: Session = Depends(get_session)
+) -> Response:
+    source = session.scalar(
+        select(SourceRecord).where(
+            SourceRecord.id == source_id, SourceRecord.task_id == task_id
+        )
+    )
+    if source is None:
+        raise HTTPException(404, "source not found")
+    session.delete(source)
+    session.commit()
+    return Response(status_code=204)
 
 
 @router.post("/{task_id}/runs", status_code=201)
@@ -76,9 +226,19 @@ def get_run(run_id: int, session: Session = Depends(get_session)) -> dict:
     ).all()
     return {
         "id": run.id,
+        "task_id": run.task_id,
+        "prompt_version_id": run.prompt_version_id,
+        "model_name": run.model_name,
         "status": run.status,
         "steps": [
-            {"name": step.name, "status": step.status, "error": step.error}
+            {
+                "name": step.name,
+                "position": step.position,
+                "status": step.status,
+                "input_json": step.input_json,
+                "output_json": step.output_json,
+                "error": step.error,
+            }
             for step in steps
         ],
     }

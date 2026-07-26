@@ -18,6 +18,18 @@ class TaskCreate(BaseModel):
         return self
 
 
+class TaskUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    content_type: str | None = None
+    target_platform: str | None = None
+    audience: str | None = None
+    tone: str | None = None
+    min_words: int | None = Field(default=None, ge=1)
+    max_words: int | None = Field(default=None, ge=1)
+    banned_phrases: list[str] | None = None
+    status: str | None = None
+
+
 class PromptCreate(BaseModel):
     name: str
     step: str
@@ -43,6 +55,16 @@ class SourceCreate(BaseModel):
     url: str
     excerpt: str = Field(max_length=180)
     facts: list[dict]
+
+
+class SourceUpdate(BaseModel):
+    title: str | None = None
+    url: str | None = None
+    excerpt: str | None = Field(default=None, max_length=180)
+    facts: list[dict] | None = None
+    status: str | None = Field(
+        default=None, pattern="^(verified|pending|rejected)$"
+    )
 
 
 class RunCreate(BaseModel):
