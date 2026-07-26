@@ -4,8 +4,10 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import ContentTask, Evaluation, HumanReview, WorkflowRun
+from app.services.demo_seed import reset_demo_project
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+demo_router = APIRouter(prefix="/api/demo", tags=["demo"])
 
 
 @router.get("")
@@ -40,3 +42,9 @@ def get_dashboard(session: Session = Depends(get_session)) -> dict:
         if average_score is not None
         else None,
     }
+
+
+@demo_router.post("/reset")
+def reset_demo(session: Session = Depends(get_session)) -> dict:
+    task_id = reset_demo_project(session)
+    return {"task_id": task_id, "mode": "demo", "label": "演示数据"}
