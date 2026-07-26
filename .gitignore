@@ -12,4 +12,6 @@ __pycache__/
 .pytest_cache/
 node_modules/
 dist/
+test-results/
+playwright-report/
 *.tsbuildinfo
