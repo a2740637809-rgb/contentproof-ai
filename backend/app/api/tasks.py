@@ -22,6 +22,9 @@ from app.schemas import (
 from app.services.evaluator import EvaluationService
 from app.services.reports import render_csv_rows, render_markdown_report
 from app.services.rules import RuleEngine
+from app.services.workflow import PersistentWorkflowService
+from app.providers.ollama import OllamaProvider
+from app.config import get_settings
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 runs_router = APIRouter(prefix="/api/runs", tags=["runs"])
@@ -94,6 +97,20 @@ def retry_run(run_id: int, session: Session = Depends(get_session)) -> dict:
     failed.error = ""
     session.commit()
     return {"run_id": run_id, "retry_from": failed.name}
+
+
+@runs_router.post("/{run_id}/execute")
+def execute_run(run_id: int, session: Session = Depends(get_session)) -> dict:
+    settings = get_settings()
+    provider = OllamaProvider(
+        base_url=settings.ollama_base_url,
+        model=settings.ollama_model,
+    )
+    try:
+        run = PersistentWorkflowService(session, provider).execute(run_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"id": run.id, "status": run.status}
 
 
 @runs_router.post("/{run_id}/evaluate", status_code=201)
