@@ -135,6 +135,9 @@ def test_product_read_models(client):
         "input_json": {},
         "output_json": {},
         "error": "",
+        "started_at": None,
+        "completed_at": None,
+        "elapsed_ms": None,
     }
     assert dashboard.json() == {
         "task_count": 2,
@@ -172,3 +175,20 @@ def test_delete_contracts(client):
     )
     assert client.delete(f"/api/tasks/{task['id']}").status_code == 409
     assert client.delete(f"/api/tasks/{task['id']}?force=true").status_code == 204
+
+
+def test_retry_specific_failed_step(client):
+    task = _create_task(client)
+    prompt = client.post(
+        "/api/prompts",
+        json={"name": "draft", "step": "draft", "template": "写稿"},
+    ).json()
+    run = client.post(
+        f"/api/tasks/{task['id']}/runs",
+        json={"prompt_version_id": prompt["id"], "model_name": "qwen2:1.5b"},
+    ).json()
+
+    response = client.post(f"/api/runs/{run['id']}/steps/outline/retry")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "step is not failed"

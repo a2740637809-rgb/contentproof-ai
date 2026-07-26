@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from time import perf_counter
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from app.models import (
     SourceRecord,
     WorkflowRun,
     WorkflowStep,
+    utc_now,
 )
 from app.providers.base import ModelProvider, ModelRequest
 
@@ -77,7 +79,11 @@ class PersistentWorkflowService:
             .order_by(WorkflowStep.position)
         ).all()
         run.status = "running"
+        run.started_at = utc_now()
+        run.completed_at = None
+        run.elapsed_ms = None
         self.session.commit()
+        run_started = perf_counter()
 
         context = "\n".join(
             f"- {source.title}: {source.excerpt}" for source in sources
@@ -88,8 +94,12 @@ class PersistentWorkflowService:
                 previous = step.output_json.get("text", previous)
                 continue
             step.status = "running"
+            step.started_at = utc_now()
+            step.completed_at = None
+            step.elapsed_ms = None
             step.input_json = {"source_context": context, "previous": previous}
             self.session.commit()
+            step_started = perf_counter()
             instruction = self._instruction(step.name, task, prompt.template)
             try:
                 result = self.provider.generate(
@@ -101,16 +111,24 @@ class PersistentWorkflowService:
             except Exception as exc:
                 step.status = "failed"
                 step.error = str(exc)
+                step.completed_at = utc_now()
+                step.elapsed_ms = round((perf_counter() - step_started) * 1000)
                 run.status = "failed"
+                run.completed_at = utc_now()
+                run.elapsed_ms = round((perf_counter() - run_started) * 1000)
                 self.session.commit()
                 raise
             step.output_json = result.data
             step.status = "completed"
             step.error = ""
+            step.completed_at = utc_now()
+            step.elapsed_ms = result.elapsed_ms
             previous = result.data["text"]
             self.session.commit()
 
         run.status = "completed"
+        run.completed_at = utc_now()
+        run.elapsed_ms = round((perf_counter() - run_started) * 1000)
         self.session.commit()
         self.session.refresh(run)
         return run

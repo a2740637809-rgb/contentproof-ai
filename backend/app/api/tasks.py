@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.db import get_session
+from app.db import SessionLocal, get_session
 from app.models import (
     ContentTask,
     Evaluation,
@@ -67,6 +67,9 @@ def run_dict(run: WorkflowRun) -> dict:
         "prompt_version_id": run.prompt_version_id,
         "model_name": run.model_name,
         "status": run.status,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+        "elapsed_ms": run.elapsed_ms,
     }
 
 
@@ -238,6 +241,9 @@ def get_run(run_id: int, session: Session = Depends(get_session)) -> dict:
                 "input_json": step.input_json,
                 "output_json": step.output_json,
                 "error": step.error,
+                "started_at": step.started_at,
+                "completed_at": step.completed_at,
+                "elapsed_ms": step.elapsed_ms,
             }
             for step in steps
         ],
@@ -259,18 +265,74 @@ def retry_run(run_id: int, session: Session = Depends(get_session)) -> dict:
     return {"run_id": run_id, "retry_from": failed.name}
 
 
-@runs_router.post("/{run_id}/execute")
-def execute_run(run_id: int, session: Session = Depends(get_session)) -> dict:
+def execute_run_background(run_id: int) -> None:
     settings = get_settings()
     provider = OllamaProvider(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
     )
-    try:
-        run = PersistentWorkflowService(session, provider).execute(run_id)
-    except ValueError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return {"id": run.id, "status": run.status}
+    with SessionLocal() as session:
+        try:
+            PersistentWorkflowService(session, provider).execute(run_id)
+        except Exception:
+            return
+
+
+@runs_router.post("/{run_id}/execute", status_code=202)
+def execute_run(
+    run_id: int,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> dict:
+    run = session.get(WorkflowRun, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    if run.status in {"queued", "running"}:
+        raise HTTPException(409, "run is already active")
+    run.status = "queued"
+    session.commit()
+    background_tasks.add_task(execute_run_background, run_id)
+    return {"id": run.id, "status": "queued"}
+
+
+@runs_router.post("/{run_id}/steps/{step_name}/retry", status_code=202)
+def retry_step(
+    run_id: int,
+    step_name: str,
+    background_tasks: BackgroundTasks,
+    session: Session = Depends(get_session),
+) -> dict:
+    run = session.get(WorkflowRun, run_id)
+    if run is None:
+        raise HTTPException(404, "run not found")
+    step = session.scalar(
+        select(WorkflowStep).where(
+            WorkflowStep.run_id == run_id, WorkflowStep.name == step_name
+        )
+    )
+    if step is None:
+        raise HTTPException(404, "step not found")
+    if step.status != "failed":
+        raise HTTPException(409, "step is not failed")
+    downstream = session.scalars(
+        select(WorkflowStep).where(
+            WorkflowStep.run_id == run_id,
+            WorkflowStep.position >= step.position,
+        )
+    ).all()
+    for item in downstream:
+        item.status = "pending"
+        item.error = ""
+        item.started_at = None
+        item.completed_at = None
+        item.elapsed_ms = None
+        if item.position > step.position:
+            item.input_json = {}
+            item.output_json = {}
+    run.status = "queued"
+    session.commit()
+    background_tasks.add_task(execute_run_background, run_id)
+    return {"id": run.id, "status": "queued", "retry_from": step.name}
 
 
 @runs_router.post("/{run_id}/evaluate", status_code=201)

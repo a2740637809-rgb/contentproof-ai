@@ -6,12 +6,13 @@ from app.api.dashboard import demo_router, router as dashboard_router
 from app.api.prompts import router as prompts_router
 from app.api.tasks import router as tasks_router
 from app.api.tasks import runs_router
-from app.db import Base, engine
+from app.db import Base, engine, ensure_prototype_columns
 from app import models  # noqa: F401
 
 
 def create_app() -> FastAPI:
     Base.metadata.create_all(engine)
+    ensure_prototype_columns()
     app = FastAPI(title="ContentProof AI", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,

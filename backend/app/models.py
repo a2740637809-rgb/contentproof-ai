@@ -59,6 +59,9 @@ class WorkflowRun(Base):
     prompt_version_id: Mapped[int] = mapped_column(ForeignKey("prompt_versions.id"))
     model_name: Mapped[str]
     status: Mapped[str] = mapped_column(default="pending")
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class WorkflowStep(Base):
@@ -72,6 +75,9 @@ class WorkflowStep(Base):
     input_json: Mapped[dict] = mapped_column(JSON, default=dict)
     output_json: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str] = mapped_column(default="")
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    elapsed_ms: Mapped[int | None] = mapped_column(nullable=True)
 
 
 class Evaluation(Base):

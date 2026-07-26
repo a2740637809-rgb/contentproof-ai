@@ -26,3 +26,36 @@ def check_database() -> str:
         connection.execute(text("SELECT 1"))
     return "ok"
 
+
+def ensure_prototype_columns() -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    additions = {
+        "source_records": {
+            "status": "VARCHAR NOT NULL DEFAULT 'pending'",
+        },
+        "workflow_runs": {
+            "started_at": "DATETIME",
+            "completed_at": "DATETIME",
+            "elapsed_ms": "INTEGER",
+        },
+        "workflow_steps": {
+            "started_at": "DATETIME",
+            "completed_at": "DATETIME",
+            "elapsed_ms": "INTEGER",
+        },
+    }
+    with engine.begin() as connection:
+        for table, columns in additions.items():
+            existing = {
+                row[1]
+                for row in connection.execute(
+                    text(f"PRAGMA table_info({table})")
+                ).fetchall()
+            }
+            for column, definition in columns.items():
+                if column not in existing:
+                    connection.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                    )
+
