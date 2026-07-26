@@ -22,6 +22,14 @@ class PromptRepository:
         self.session = session
 
     def create_version(self, data: PromptCreate) -> PromptVersion:
+        existing = self.session.scalar(
+            select(PromptVersion).where(
+                PromptVersion.name == data.name,
+                PromptVersion.template == data.template,
+            )
+        )
+        if existing is not None:
+            return existing
         latest = self.session.scalar(
             select(func.max(PromptVersion.version)).where(
                 PromptVersion.name == data.name

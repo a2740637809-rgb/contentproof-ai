@@ -1,0 +1,16 @@
+[
+  {
+    "name": "news_draft",
+    "step": "draft",
+    "version": 1,
+    "change_note": "基础版结构化新闻稿",
+    "template": "只依据事实卡片写作。缺少信息时明确标记待核验，不得补写事实。"
+  },
+  {
+    "name": "news_draft",
+    "step": "draft",
+    "version": 2,
+    "change_note": "增加平台、受众与来源约束",
+    "template": "只依据事实卡片写作，并适配目标平台与受众。每个数字、日期、人物和机构必须来自事实卡片；缺少信息时标记待核验。"
+  }
+]
