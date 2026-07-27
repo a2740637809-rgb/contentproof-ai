@@ -16,6 +16,7 @@ import trafilatura
 from app.db import get_session
 from app.v2_models import (
     AnalysisRunV2,
+    CommentEmbedding,
     ResearchBrief,
     ResearchComment,
     ResearchProject,
@@ -23,6 +24,12 @@ from app.v2_models import (
     ResearchTheme,
     ReviewEvent,
     ThemeMembership,
+)
+from app.semantic_analysis import (
+    DEFAULT_EMBEDDING_MODEL,
+    cluster_vectors,
+    embed_texts,
+    pack_vector,
 )
 
 router = APIRouter(prefix="/api/v2", tags=["content-intelligence-v2"])
@@ -40,6 +47,7 @@ class ManualImport(BaseModel):
 
 class AnalysisRequest(BaseModel):
     preferred_clusters: int | None = Field(default=None, ge=2, le=12)
+    mode: str = Field(default="preview", pattern="^(preview|semantic)$")
 
 
 class ThemeUpdate(BaseModel):
@@ -433,25 +441,59 @@ def analyze_project(
     ).all()
     if not comments:
         raise HTTPException(409, "没有可分析的评论")
+    semantic_mode = payload.mode == "semantic"
     run = AnalysisRunV2(
         project_id=project_id,
         status="running",
-        step="clustering",
+        step="embedding" if semantic_mode else "clustering",
         started_at=utc_now(),
+        embedding_model=DEFAULT_EMBEDDING_MODEL if semantic_mode else "rules-preview",
+        clustering_method="pending" if semantic_mode else "semantic-preview",
     )
     session.add(run)
     session.commit()
     session.refresh(run)
     groups: dict[str, list[ResearchComment]] = defaultdict(list)
-    for comment in comments:
-        matched = False
-        for name, words in THEMES.items():
-            if any(word in comment.cleaned_text for word in words):
-                groups[name].append(comment)
-                matched = True
-                break
-        if not matched:
-            groups["其他待研判"].append(comment)
+    if semantic_mode:
+        vectors = embed_texts(
+            [comment.cleaned_text for comment in comments], DEFAULT_EMBEDDING_MODEL
+        )
+        labels, method = cluster_vectors(vectors)
+        run.clustering_method = method
+        run.step = "clustering"
+        for comment, vector, label in zip(comments, vectors, labels):
+            session.add(
+                CommentEmbedding(
+                    comment_id=comment.id,
+                    model_name=DEFAULT_EMBEDDING_MODEL,
+                    dimensions=int(vector.size),
+                    vector=pack_vector(vector),
+                )
+            )
+            groups[str(label)].append(comment)
+        semantic_groups = groups
+        groups = defaultdict(list)
+        for label, members in semantic_groups.items():
+            combined = " ".join(item.cleaned_text for item in members)
+            display = next(
+                (
+                    name
+                    for name, words in THEMES.items()
+                    if any(word in combined for word in words)
+                ),
+                "未归类评论" if label == "-1" else f"候选主题 {int(label) + 1}",
+            )
+            groups[display].extend(members)
+    else:
+        for comment in comments:
+            matched = False
+            for name, words in THEMES.items():
+                if any(word in comment.cleaned_text for word in words):
+                    groups[name].append(comment)
+                    matched = True
+                    break
+            if not matched:
+                groups["其他待研判"].append(comment)
     themes = []
     for label, (name, members) in enumerate(groups.items()):
         theme = ResearchTheme(
