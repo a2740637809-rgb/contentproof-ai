@@ -15,7 +15,11 @@ from app import models  # noqa: F401
 def create_app() -> FastAPI:
     Base.metadata.create_all(engine)
     ensure_prototype_columns()
-    app = FastAPI(title="ContentProof AI", version="0.1.0")
+    app = FastAPI(
+        title="SignalProof Studio API",
+        version="0.2.0",
+        description="Local-first, evidence-to-brief workflow API.",
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173"],

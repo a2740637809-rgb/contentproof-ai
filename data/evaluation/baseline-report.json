@@ -1,0 +1,87 @@
+{
+  "dataset": "signalproof-v1",
+  "mode": "deterministic-keyword-baseline",
+  "cases": 50,
+  "accuracy": 0.84,
+  "macro_f1": 0.7425,
+  "labels": {
+    "事实可信": {
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.9474,
+      "support": 10
+    },
+    "其他反馈": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    },
+    "内容质量": {
+      "precision": 1.0,
+      "recall": 0.7,
+      "f1": 0.8235,
+      "support": 10
+    },
+    "功能诉求": {
+      "precision": 0.8889,
+      "recall": 0.8,
+      "f1": 0.8421,
+      "support": 10
+    },
+    "效率体验": {
+      "precision": 0.8889,
+      "recall": 0.8,
+      "f1": 0.8421,
+      "support": 10
+    },
+    "隐私安全": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 10
+    }
+  },
+  "failures": [
+    {
+      "id": "B006",
+      "expected": "事实可信",
+      "predicted": "其他反馈"
+    },
+    {
+      "id": "B016",
+      "expected": "内容质量",
+      "predicted": "效率体验"
+    },
+    {
+      "id": "B018",
+      "expected": "内容质量",
+      "predicted": "其他反馈"
+    },
+    {
+      "id": "B020",
+      "expected": "内容质量",
+      "predicted": "其他反馈"
+    },
+    {
+      "id": "B021",
+      "expected": "效率体验",
+      "predicted": "其他反馈"
+    },
+    {
+      "id": "B025",
+      "expected": "效率体验",
+      "predicted": "功能诉求"
+    },
+    {
+      "id": "B035",
+      "expected": "功能诉求",
+      "predicted": "其他反馈"
+    },
+    {
+      "id": "B037",
+      "expected": "功能诉求",
+      "predicted": "其他反馈"
+    }
+  ]
+}

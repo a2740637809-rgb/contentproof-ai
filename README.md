@@ -1,88 +1,188 @@
 # SignalProof Studio
 
-> 把零散的用户声音，变成有原话证据、可评测、可复现的内容决策。
+> 把零散反馈转化为有来源、可复核、可执行的内容简报。
 
-[在线体验](https://a2740637809-rgb.github.io/contentproof-ai/) · [产品设计](docs/superpowers/specs/2026-07-27-signalproof-flagship-design.md) · [系统架构](docs/architecture.md) · [研究依据](docs/benchmark-research.md)
+[在线体验](https://a2740637809-rgb.github.io/contentproof-ai/) · [公开案例](docs/case-study.md) · [评测方法](docs/evaluation.md) · [架构说明](docs/architecture.md)
 
-![SignalProof Studio：信号河流](docs/assets/signalproof-desktop.png)
+SignalProof 面向媒体编辑、品牌内容运营和内容策划人员。它不让 AI
+直接替代编辑，而是把每个候选信号与原始反馈连接起来，让人能够检查、
+修改和最终决定哪些信息进入内容 Brief。
+
+![SignalProof evidence desk](docs/assets/signalproof-evidence-desk.png)
+
+| 可解释信号地图 | 带证据的内容 Brief |
+|---|---|
+| ![Signal map](docs/assets/signalproof-signal-map.png) | ![Evidence-linked brief](docs/assets/signalproof-brief.png) |
 
 ## 为什么做
 
-AI 写作工具解决了“生成更快”，却没有解决内容团队更昂贵的问题：用户到底在抱怨什么？哪一个最值得优先解决？一条内容结论来自哪项证据？Prompt 改版是真的更好，还是看起来更顺眼？
+内容团队通常从访谈、客服、问卷、评论和社群中收集反馈。真正困难的
+不是“再生成一篇稿件”，而是：
 
-SignalProof 把原先分散的 VoiceMap 反馈洞察与 ContentProof 内容评测合并为一个产品闭环：
+- 同一个问题可能有很多不同说法；
+- 结论容易脱离原始语境；
+- 编辑无法判断 AI 为什么这样归类；
+- 模型失败后已经完成的步骤可能丢失；
+- 未发布素材不适合默认上传到第三方服务。
+
+SignalProof 将工作收敛为一条可解释链路：
 
 ```text
-反馈/评论 → 隐私脱敏 → 可解释聚类 → 机会评分 → 内容简报
-                                            ↓
-人工决策 ← 对照评测 ← Prompt 实验 ← 事实来源
-    └────────────────── 回流为下一轮信号
+原始证据 → 脱敏与校验 → 候选信号 → 人工复核 → 内容 Brief → 导出
 ```
 
-## 核心能力
+## 现在可以真实完成什么
 
-- **信号分析**：按主题、频次、负面情绪与业务影响形成机会排序。
-- **原话追溯**：每个聚类保留 `F002` 这类证据 ID，不把摘要冒充用户原话。
-- **简报生成**：把最高机会转换成问题、受众、证据、假设与成功指标。
-- **内容实验**：固定任务与事实集，对照 Prompt A/B 的准确性、来源覆盖率与平台适配。
-- **人工终审**：模型只辅助评分，最终接受、修改或退回由人决定。
-- **本地优先**：FastAPI + SQLite + Ollama；公开演示无需密钥。
+- 在公开演示中新增、删除和分析反馈；
+- 使用可重复的浏览器规则基线生成候选信号；
+- 查看规则命中理由、置信度和每条原始证据；
+- 从选中信号生成可编辑 Brief；
+- 在本地后端持久化任务、来源、工作流步骤、评测与人工审核；
+- Ollama 可用时执行结构化本地模型工作流；
+- 模型不可用时保留确定性规则模式，而不是伪造模型结果；
+- 运行 50 条分层样本的可复现基准，并公开全部失败案例。
 
-## 90 秒体验
+## 一分钟体验
 
-1. 打开[在线演示](https://a2740637809-rgb.github.io/contentproof-ai/)。
-2. 在“信号河流”切换机会节点，查看对应原话证据。
-3. 创建内容简报，进入内容实验。
-4. 对比基线 Prompt 与证据约束 Prompt，完成人工决策闭环。
+1. 在“证据工作台”输入一条真实反馈；
+2. 点击“加入证据”；
+3. 点击“分析”；
+4. 选择候选信号，观察左侧证据高亮；
+5. 点击“生成内容简报”并人工修改。
 
-## 本地运行
+公开页面明确标注为**浏览器规则基线**。其中的置信度只表示关键词命中
+与证据数量，不代表业务价值，也不是未经验证的模型评分。
 
-```bash
+## 架构
+
+```mermaid
+flowchart LR
+    A["React evidence desk"] --> B["Typed API client"]
+    B --> C["FastAPI"]
+    C --> D["Rules baseline"]
+    C --> E["Optional Ollama adapter"]
+    C --> F["Resumable workflow"]
+    D --> G["Signals + evidence links"]
+    E --> G
+    G --> H["Human review"]
+    H --> I["Evidence-linked brief"]
+    C --> J[("SQLite")]
+```
+
+| 层 | 责任 |
+|---|---|
+| React/Vite | 证据录入、信号检查、Brief 编辑和公开可用的规则演示 |
+| FastAPI | 项目数据、运行状态、评测、审核和导出 API |
+| SQLAlchemy/SQLite | 本地持久化与可恢复步骤 |
+| 规则基线 | 稳定、便宜、可解释的最低能力 |
+| Ollama | 可选的本地结构化生成，不是产品可用性的前提 |
+| Evaluation runner | 分标签质量、失败样本和回归检查 |
+
+## 可复现评测
+
+`data/evaluation/signalproof-v1.jsonl` 包含 50 条仓库自建合成样本，覆盖
+五个主题与多个难度等级。它不包含客户私有数据，也不代表真实生产分布。
+
+当前确定性关键词基线：
+
+| 指标 | v0.2 基线 |
+|---|---:|
+| 样本数 | 50 |
+| 分类准确率 | 0.84 |
+| Macro F1 | 0.7425 |
+| 公开失败案例 | 8 |
+
+运行：
+
+```powershell
+py -3.12 scripts/run_benchmark.py
+```
+
+结果写入 `data/evaluation/baseline-report.json`，其中包含每个标签的
+precision、recall、F1 和所有误判。项目刻意保留失败案例，避免用一个
+漂亮的综合分掩盖规则基线的边界。
+
+## 本地启动
+
+### 1. 后端
+
+要求 Python 3.11+。
+
+```powershell
+cd backend
+py -3.12 -m pip install -e ".[dev]"
+py -3.12 -m uvicorn app.main:app --reload
+```
+
+API 文档：`http://127.0.0.1:8000/docs`
+
+### 2. 前端
+
+```powershell
 cd frontend
 npm install
 npm run dev
 ```
 
-后端与本地模型：
+页面：`http://127.0.0.1:5173`
 
-```bash
-ollama serve
+### 3. 可选 Ollama
+
+```powershell
 ollama pull qwen2.5:7b
-cd backend
-py -3.12 -m venv .venv
-.\.venv\Scripts\pip install -e ".[dev]"
-.\.venv\Scripts\uvicorn app.main:app --reload
+ollama serve
 ```
 
-`POST /api/signals/analyze` 接收多渠道反馈，返回脱敏证据、信号聚类、机会分与内容简报。
-
-## 技术取舍
-
-| 选择 | 原因 |
-|---|---|
-| React + TypeScript + SVG | 信号地图可交互、可访问、无需重型图形依赖 |
-| FastAPI + Pydantic | 聚类与简报结构可验证，接口自动生成文档 |
-| 确定性规则 + 可选 LLM | 演示可复现；模型不可用时核心链路仍工作 |
-| SQLite + Ollama | 未发布素材与运行轨迹可留在设备 |
-| Pytest + Vitest + Playwright | 覆盖服务、组件、桌面与手机完整路径 |
+复制 `.env.example` 为 `.env` 后可修改模型地址和模型名。公开静态演示
+不依赖 Ollama。
 
 ## 验证
 
-```bash
-cd backend && python -m pytest tests -q
-cd ../frontend
+```powershell
+cd backend
+py -3.12 -m pytest -q
+
+cd ..\frontend
 npm test -- --run
 npm run build
-npm run test:e2e
 ```
 
-当前边界：单机产品原型，不包含账号、计费、多人实时协作与自动发布。示例反馈为产品演示数据，不代表真实统计研究。
+## 数据与隐私
 
-## Roadmap
+- 公开演示的分析发生在浏览器中；
+- 规则分析会脱敏中国大陆手机号和常见邮箱格式；
+- 本地 API 默认使用 SQLite；
+- 仓库示例为合成或公开可引用的短摘要；
+- 不应将敏感素材放入公开演示或提交到 Git。
 
-- CSV/JSON 反馈导入与大样本虚拟化
-- 聚类合并、拆分与人工命名
-- 评测数据集版本管理与失败样本回归
-- 脱敏证据包导出与分享
+这不是完整的数据防泄漏系统。生产使用前仍需补充认证、授权、密钥管理、
+审计保留策略和组织级安全评审。
 
-欢迎通过 Issue 提交真实的内容运营痛点、失败样本或产品建议。
+## 已知限制
+
+- 当前规则基线依赖有限词表，难以处理隐喻、否定和多意图反馈；
+- 50 条合成样本只能用于早期回归，不能证明真实用户效果；
+- 公开 GitHub Pages 是浏览器演示，本地后端能力需要自行启动；
+- 用户访谈和真实任务验证尚未完成，不宣称效率提升或团队采用；
+- Ollama 输出仍需要结构校验和人工终审。
+
+## 路线图
+
+- [x] 可操作的证据到 Brief 公开演示
+- [x] 50 条分层评测集与失败报告
+- [x] 持久化任务与可恢复模型工作流
+- [ ] 向量语义基线与规则基线对照
+- [ ] 信号合并、拆分、驳回的完整审核日志
+- [ ] 3–5 位内容从业者的任务测试
+- [ ] 认证、权限和更完整的隐私威胁模型
+
+## AI 工具与个人贡献边界
+
+本项目使用 AI 编程工具辅助脚手架、局部实现、测试和文档整理。产品问题
+定义、用户范围、证据链设计、评测标准、验收门槛和最终取舍需要由项目
+负责人理解并承担。任何无法通过代码、数据、测试或研究记录证明的结果，
+都不会写成项目成效。
+
+## License
+
+[MIT](LICENSE)

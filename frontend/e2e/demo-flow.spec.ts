@@ -1,18 +1,23 @@
 import { expect, test } from "@playwright/test";
 
-test("visitor turns an audience signal into a measured decision", async ({ page }) => {
+test("visitor turns editable evidence into a traceable brief", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /把用户声音变成/ })).toBeVisible();
-  await page.getByRole("button", { name: /表达同质化/ }).click();
-  await expect(page.getByRole("heading", { name: "表达同质化" })).toBeVisible();
-  await page.getByRole("button", { name: /从最高机会创建内容简报/ }).click();
-  await expect(page.getByText("✓ 简报已创建")).toBeVisible();
-  await expect(page.getByText("证据 F002")).toBeVisible();
-  await page.getByRole("button", { name: /进入内容实验/ }).click();
-  await expect(page.getByRole("heading", { name: "内容实验" })).toBeVisible();
-  await expect(page.getByText("接受 B：证据完整")).toBeVisible();
-  await page.getByRole("button", { name: /完成决策闭环/ }).click();
-  await expect(page.getByText("信号河流")).toBeVisible();
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+  await expect(page.getByRole("heading", { name: /从零散反馈/ })).toBeVisible();
+
+  await page.getByLabel("反馈内容").fill("文章事实写错了，我需要看到原始来源。");
+  await page.getByRole("button", { name: "加入证据" }).click();
+  await page.getByRole("button", { name: /分析 6 条证据/ }).click();
+
+  await expect(page.getByRole("heading", { name: "事实可信" })).toBeVisible();
+  await expect(page.locator(".rationale")).toContainText("命中");
+  await page.getByRole("button", { name: /生成内容简报/ }).click();
+
+  await expect(page.getByRole("heading", { name: "内容简报" })).toBeVisible();
+  await expect(page.getByText("原始证据 / 2")).toBeVisible();
+  await expect(page.getByText(/当前公开演示使用规则基线/)).toBeVisible();
+
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
   expect(overflow).toBe(false);
 });

@@ -1,11 +1,13 @@
 from typing import Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ModelRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     prompt: str
-    schema: dict
+    response_schema: dict = Field(alias="schema")
     temperature: float = 0.2
 
 

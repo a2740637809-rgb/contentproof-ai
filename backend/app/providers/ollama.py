@@ -30,7 +30,7 @@ class OllamaProvider:
                 "model": self.model,
                 "prompt": request.prompt,
                 "stream": False,
-                "format": request.schema,
+                "format": request.response_schema,
                 "options": {"temperature": request.temperature},
             },
         )
