@@ -109,3 +109,79 @@ def test_brief_requires_confirmed_theme(client):
     response = client.post(f"/api/v2/projects/{project_id}/briefs", json={})
     assert response.status_code == 409
     assert "确认" in response.json()["detail"]
+
+
+def test_theme_merge_split_and_move_preserve_evidence(client):
+    project_id = create_project(client)["id"]
+    client.post(
+        f"/api/v2/projects/{project_id}/imports/manual",
+        json={
+            "comments": [
+                "什么时候报名？",
+                "报名入口在哪里？",
+                "活动在哪里举行？",
+                "具体地点怎么走？",
+                "需要准备什么材料？",
+            ]
+        },
+    )
+    run = client.post(f"/api/v2/projects/{project_id}/analysis", json={}).json()
+    first, second = run["themes"][:2]
+
+    merged = client.post(
+        f"/api/v2/themes/{first['id']}/merge",
+        json={"source_theme_ids": [second["id"]], "name": "参与信息总览"},
+    )
+    assert merged.status_code == 200
+    assert set(merged.json()["comment_ids"]) == set(
+        first["comment_ids"] + second["comment_ids"]
+    )
+
+    moved_comment = merged.json()["comment_ids"][-1]
+    split = client.post(
+        f"/api/v2/themes/{first['id']}/split",
+        json={"name": "单独问题", "comment_ids": [moved_comment]},
+    )
+    assert split.status_code == 201
+    assert split.json()["comment_ids"] == [moved_comment]
+
+    moved = client.post(
+        f"/api/v2/comments/{moved_comment}/move",
+        json={"target_theme_id": first["id"]},
+    )
+    assert moved.status_code == 200
+    assert moved_comment in moved.json()["comment_ids"]
+
+    history = client.get(f"/api/v2/projects/{project_id}/review-events")
+    assert history.status_code == 200
+    assert {item["action"] for item in history.json()["items"]} >= {
+        "merge",
+        "split",
+        "move_comment",
+    }
+
+
+def test_web_import_reports_article_and_comments_separately(client, monkeypatch):
+    project_id = create_project(client)["id"]
+
+    def fake_extract(url):
+        return {
+            "title": "公开报道",
+            "body": "这是一篇公开报道的正文。",
+            "author": "编辑部",
+            "published_at": "2026-07-27",
+            "comments": [],
+            "article_status": "success",
+            "comments_status": "unavailable",
+            "warnings": ["页面未提供公开可访问评论，请粘贴或上传评论。"],
+        }
+
+    monkeypatch.setattr("app.v2_api.extract_public_page", fake_extract)
+    response = client.post(
+        f"/api/v2/projects/{project_id}/imports/web",
+        json={"url": "https://example.com/article"},
+    )
+    assert response.status_code == 201
+    assert response.json()["article_status"] == "success"
+    assert response.json()["comments_status"] == "unavailable"
+    assert response.json()["warnings"]

@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFil
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+import httpx
+import trafilatura
 
 from app.db import get_session
 from app.v2_models import (
@@ -49,6 +51,24 @@ class ThemeUpdate(BaseModel):
 
 class BriefRequest(BaseModel):
     selected_theme_ids: list[int] | None = None
+
+
+class WebImport(BaseModel):
+    url: str = Field(pattern=r"^https?://")
+
+
+class MergeRequest(BaseModel):
+    source_theme_ids: list[int] = Field(min_length=1)
+    name: str = Field(min_length=1, max_length=160)
+
+
+class SplitRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    comment_ids: list[int] = Field(min_length=1)
+
+
+class MoveCommentRequest(BaseModel):
+    target_theme_id: int
 
 
 PHONE_RE = re.compile(r"(?<!\d)(1[3-9]\d)(\d{4})(\d{4})(?!\d)")
@@ -136,6 +156,44 @@ def add_comments(
         created += 1
     session.commit()
     return created, duplicates
+
+
+def extract_public_page(url: str):
+    response = httpx.get(
+        url,
+        follow_redirects=True,
+        timeout=20,
+        headers={"User-Agent": "ContentIntelligenceLab/0.3 (+local research tool)"},
+    )
+    response.raise_for_status()
+    metadata = trafilatura.extract(
+        response.text,
+        output_format="json",
+        with_metadata=True,
+        include_comments=True,
+    )
+    if not metadata:
+        raise ValueError("页面没有可提取的正文")
+    import json
+
+    parsed = json.loads(metadata)
+    comments = parsed.get("comments") or []
+    if isinstance(comments, str):
+        comments = [line.strip() for line in comments.splitlines() if line.strip()]
+    warnings = []
+    comments_status = "success" if comments else "unavailable"
+    if not comments:
+        warnings.append("页面未提供公开可访问评论，请粘贴或上传评论。")
+    return {
+        "title": parsed.get("title") or "",
+        "body": parsed.get("text") or "",
+        "author": parsed.get("author") or "",
+        "published_at": parsed.get("date") or "",
+        "comments": comments,
+        "article_status": "success",
+        "comments_status": comments_status,
+        "warnings": warnings,
+    }
 
 
 @router.post("/projects", status_code=201)
@@ -251,6 +309,63 @@ async def import_spreadsheet(
         "article_status": "not_requested",
         "comments_status": "success",
         "warnings": [],
+    }
+
+
+@router.post("/projects/{project_id}/imports/web", status_code=201)
+def import_web(
+    project_id: int, payload: WebImport, session: Session = Depends(get_session)
+):
+    project = session.get(ResearchProject, project_id)
+    if project is None:
+        raise HTTPException(404, "研究项目不存在")
+    try:
+        extracted = extract_public_page(payload.url)
+    except Exception as error:
+        extracted = {
+            "title": "",
+            "body": "",
+            "author": "",
+            "published_at": "",
+            "comments": [],
+            "article_status": "failed",
+            "comments_status": "not_attempted",
+            "warnings": [f"网页抓取失败：{type(error).__name__}。请改用粘贴或表格导入。"],
+        }
+    source = ResearchSource(
+        project_id=project_id,
+        kind="web",
+        url=payload.url,
+        title=extracted["title"],
+        body=extracted["body"],
+        author=extracted["author"],
+        published_at=extracted["published_at"],
+        article_status=extracted["article_status"],
+        comments_status=extracted["comments_status"],
+        warnings=extracted["warnings"],
+    )
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+    created, duplicates = add_comments(
+        session, project_id, source.id, extracted["comments"]
+    )
+    if created:
+        project.stage = "imported"
+        session.commit()
+    return {
+        "source_id": source.id,
+        "created": created,
+        "duplicates": duplicates,
+        "article_status": source.article_status,
+        "comments_status": source.comments_status,
+        "warnings": source.warnings,
+        "article": {
+            "title": source.title,
+            "author": source.author,
+            "published_at": source.published_at,
+            "body_preview": source.body[:240],
+        },
     }
 
 
@@ -402,6 +517,152 @@ def update_theme(
     )
     session.commit()
     return theme_json(item, session)
+
+
+@router.post("/themes/{theme_id}/merge")
+def merge_themes(
+    theme_id: int, payload: MergeRequest, session: Session = Depends(get_session)
+):
+    target = session.get(ResearchTheme, theme_id)
+    if target is None:
+        raise HTTPException(404, "目标主题不存在")
+    sources = session.scalars(
+        select(ResearchTheme).where(ResearchTheme.id.in_(payload.source_theme_ids))
+    ).all()
+    if len(sources) != len(set(payload.source_theme_ids)):
+        raise HTTPException(404, "存在无效的来源主题")
+    if any(item.project_id != target.project_id for item in sources):
+        raise HTTPException(409, "不能合并不同项目的主题")
+    before = theme_json(target, session)
+    existing = set(before["comment_ids"])
+    for source in sources:
+        memberships = session.scalars(
+            select(ThemeMembership).where(ThemeMembership.theme_id == source.id)
+        ).all()
+        for membership in memberships:
+            if membership.comment_id not in existing:
+                membership.theme_id = target.id
+                existing.add(membership.comment_id)
+            else:
+                session.delete(membership)
+        source.status = "rejected"
+    target.name = payload.name
+    session.flush()
+    after = theme_json(target, session)
+    session.add(
+        ReviewEvent(
+            project_id=target.project_id,
+            theme_id=target.id,
+            action="merge",
+            before=before,
+            after=after,
+        )
+    )
+    session.commit()
+    return theme_json(target, session)
+
+
+@router.post("/themes/{theme_id}/split", status_code=201)
+def split_theme(
+    theme_id: int, payload: SplitRequest, session: Session = Depends(get_session)
+):
+    source = session.get(ResearchTheme, theme_id)
+    if source is None:
+        raise HTTPException(404, "来源主题不存在")
+    memberships = session.scalars(
+        select(ThemeMembership).where(
+            ThemeMembership.theme_id == source.id,
+            ThemeMembership.comment_id.in_(payload.comment_ids),
+        )
+    ).all()
+    if len(memberships) != len(set(payload.comment_ids)):
+        raise HTTPException(409, "只能拆分当前主题中的评论")
+    new_theme = ResearchTheme(
+        project_id=source.project_id,
+        analysis_run_id=source.analysis_run_id,
+        name=payload.name,
+        summary="由人工从原主题中拆分，等待确认。",
+        status="pending_review",
+        cluster_label=-2,
+    )
+    session.add(new_theme)
+    session.flush()
+    for membership in memberships:
+        membership.theme_id = new_theme.id
+    session.flush()
+    after = theme_json(new_theme, session)
+    session.add(
+        ReviewEvent(
+            project_id=source.project_id,
+            theme_id=new_theme.id,
+            action="split",
+            before={"source_theme_id": source.id},
+            after=after,
+        )
+    )
+    session.commit()
+    return theme_json(new_theme, session)
+
+
+@router.post("/comments/{comment_id}/move")
+def move_comment(
+    comment_id: int,
+    payload: MoveCommentRequest,
+    session: Session = Depends(get_session),
+):
+    target = session.get(ResearchTheme, payload.target_theme_id)
+    comment = session.get(ResearchComment, comment_id)
+    if target is None or comment is None:
+        raise HTTPException(404, "评论或目标主题不存在")
+    if target.project_id != comment.project_id:
+        raise HTTPException(409, "不能跨项目移动评论")
+    memberships = session.scalars(
+        select(ThemeMembership)
+        .join(ResearchTheme, ResearchTheme.id == ThemeMembership.theme_id)
+        .where(
+            ThemeMembership.comment_id == comment_id,
+            ResearchTheme.project_id == target.project_id,
+        )
+    ).all()
+    before = {"theme_ids": [item.theme_id for item in memberships]}
+    for membership in memberships:
+        session.delete(membership)
+    session.add(ThemeMembership(theme_id=target.id, comment_id=comment.id))
+    session.flush()
+    after = theme_json(target, session)
+    session.add(
+        ReviewEvent(
+            project_id=target.project_id,
+            theme_id=target.id,
+            action="move_comment",
+            before=before,
+            after={"target_theme_id": target.id, "comment_id": comment.id},
+        )
+    )
+    session.commit()
+    return after
+
+
+@router.get("/projects/{project_id}/review-events")
+def list_review_events(project_id: int, session: Session = Depends(get_session)):
+    items = session.scalars(
+        select(ReviewEvent)
+        .where(ReviewEvent.project_id == project_id)
+        .order_by(ReviewEvent.id.desc())
+    ).all()
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "theme_id": item.theme_id,
+                "action": item.action,
+                "before": item.before,
+                "after": item.after,
+                "created_at": item.created_at,
+            }
+            for item in items
+        ]
+    }
 
 
 def brief_json(item: ResearchBrief):
