@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { analyzeEvidence, createBrief, type Brief, type EvidenceItem, type Signal } from "./lib/analyzer";
+import { analyzeSignals } from "./api";
+import { createBrief, type Brief, type EvidenceItem, type Signal } from "./lib/analyzer";
 import "./styles.css";
 
 const starterEvidence: EvidenceItem[] = [
@@ -46,11 +47,14 @@ export default function App() {
     setStatus("证据已更新，等待重新分析");
   };
 
-  const runAnalysis = () => {
-    const result = analyzeEvidence(evidence);
+  const runAnalysis = async () => {
+    setStatus("正在分析证据");
+    const result = await analyzeSignals(evidence);
     setSignals(result.signals);
     setSelectedId(result.signals[0]?.id ?? "");
-    setStatus(`浏览器规则基线 · ${result.signals.length} 个信号`);
+    setStatus(
+      `${result.mode === "rules-v1" ? "本地 API 规则基线" : "浏览器规则基线"} · ${result.signals.length} 个信号`,
+    );
     setView("signals");
   };
 
