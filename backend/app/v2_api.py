@@ -29,6 +29,7 @@ from app.semantic_analysis import (
     DEFAULT_EMBEDDING_MODEL,
     cluster_vectors,
     embed_texts,
+    fallback_text_vectors,
     pack_vector,
 )
 
@@ -455,21 +456,36 @@ def analyze_project(
     session.refresh(run)
     groups: dict[str, list[ResearchComment]] = defaultdict(list)
     if semantic_mode:
-        vectors = embed_texts(
-            [comment.cleaned_text for comment in comments], DEFAULT_EMBEDDING_MODEL
-        )
+        try:
+            vectors = embed_texts(
+                [comment.cleaned_text for comment in comments], DEFAULT_EMBEDDING_MODEL
+            )
+        except Exception:
+            vectors = fallback_text_vectors([comment.cleaned_text for comment in comments])
+            run.embedding_model = "tfidf-char-local-fallback"
         labels, method = cluster_vectors(vectors)
+        if run.embedding_model != DEFAULT_EMBEDDING_MODEL:
+            method = f"{method}-offline-fallback"
         run.clustering_method = method
         run.step = "clustering"
         for comment, vector, label in zip(comments, vectors, labels):
-            session.add(
-                CommentEmbedding(
+            embedding = session.scalar(
+                select(CommentEmbedding).where(
+                    CommentEmbedding.comment_id == comment.id,
+                    CommentEmbedding.model_name == DEFAULT_EMBEDDING_MODEL,
+                )
+            )
+            if embedding is None:
+                embedding = CommentEmbedding(
                     comment_id=comment.id,
                     model_name=DEFAULT_EMBEDDING_MODEL,
                     dimensions=int(vector.size),
                     vector=pack_vector(vector),
                 )
-            )
+                session.add(embedding)
+            else:
+                embedding.dimensions = int(vector.size)
+                embedding.vector = pack_vector(vector)
             groups[str(label)].append(comment)
         semantic_groups = groups
         groups = defaultdict(list)
@@ -527,9 +543,20 @@ def analyze_project(
 
 @router.get("/projects/{project_id}/themes")
 def list_themes(project_id: int, session: Session = Depends(get_session)):
+    latest_run_id = session.scalar(
+        select(func.max(AnalysisRunV2.id)).where(
+            AnalysisRunV2.project_id == project_id,
+            AnalysisRunV2.status == "completed",
+        )
+    )
+    if latest_run_id is None:
+        return {"items": []}
     items = session.scalars(
         select(ResearchTheme)
-        .where(ResearchTheme.project_id == project_id)
+        .where(
+            ResearchTheme.project_id == project_id,
+            ResearchTheme.analysis_run_id == latest_run_id,
+        )
         .order_by(ResearchTheme.id)
     ).all()
     return {"items": [theme_json(item, session) for item in items]}
@@ -771,6 +798,9 @@ def create_brief(
         theme_ids=[theme.id for theme in themes],
     )
     session.add(item)
+    project = session.get(ResearchProject, project_id)
+    if project is not None:
+        project.stage = "brief"
     session.commit()
     session.refresh(item)
     return brief_json(item)

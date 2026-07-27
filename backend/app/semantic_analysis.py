@@ -2,6 +2,7 @@ from functools import lru_cache
 
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
@@ -39,6 +40,14 @@ def embed_texts(
         convert_to_numpy=True,
     )
     return np.asarray(values, dtype=np.float32)
+
+
+def fallback_text_vectors(texts: list[str]) -> np.ndarray:
+    """Offline fallback when the optional BGE model has not been downloaded."""
+    if not texts:
+        return np.empty((0, 0), dtype=np.float32)
+    values = TfidfVectorizer(analyzer="char", ngram_range=(2, 4), min_df=1).fit_transform(texts)
+    return np.asarray(values.toarray(), dtype=np.float32)
 
 
 def cluster_vectors(
