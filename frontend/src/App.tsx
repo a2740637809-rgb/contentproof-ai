@@ -797,7 +797,10 @@ function ImportPage({ project, onDone }: { project: Project; onDone: () => void 
 
 function DataPage({ project, comments, onView }: { project: Project; comments: Comment[]; themes: Theme[]; onView: (view: WorkspaceView) => void }) {
   const [filter, setFilter] = useState<"all" | "included" | "excluded">("all");
-  const visible = comments.filter((item) => filter === "all" || item.status === filter);
+  const visible = useMemo(
+    () => comments.filter((item) => filter === "all" || item.status === filter),
+    [comments, filter],
+  );
   const column = createColumnHelper<Comment>();
   const columns = useMemo(() => [
     column.accessor("id", { header: "编号", cell: (info) => `C-${String(info.getValue()).padStart(3, "0")}` }),

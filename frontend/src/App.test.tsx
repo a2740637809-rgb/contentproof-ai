@@ -175,4 +175,16 @@ describe("Content Intelligence Lab", () => {
     expect(screen.getByRole("button", { name: "归档研究" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "移入回收站" })).toBeInTheDocument();
   });
+
+  it("filters excluded comments without entering a render loop", async () => {
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "继续研究" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: /数据检查/ }))[0]);
+    expect(await screen.findAllByText("广告加微信abc")).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /待排除 1/ }));
+
+    expect(await screen.findAllByText("广告加微信abc")).toHaveLength(2);
+    expect(screen.queryByText("什么时候可以报名？")).not.toBeInTheDocument();
+  });
 });
