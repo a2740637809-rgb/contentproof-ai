@@ -6,9 +6,13 @@
 
 ![Content Intelligence Lab 项目首页](docs/assets/content-intelligence-home.png)
 
-| 研究概览 | 证据审阅台 |
+| Agent 运行轨迹 | 同数据方案对比 |
 |---|---|
-| ![研究概览](docs/assets/content-intelligence-overview.png) | ![证据审阅台](docs/assets/content-intelligence-review.png) |
+| ![Agent 运行轨迹](docs/assets/content-intelligence-trace.png) | ![同数据方案对比](docs/assets/content-intelligence-benchmark.png) |
+
+| 研究概览 | 模型中心 |
+|---|---|
+| ![研究概览](docs/assets/content-intelligence-overview.png) | ![模型中心](docs/assets/content-intelligence-models.png) |
 
 ## 它解决什么问题
 
@@ -98,13 +102,27 @@ BAAI/bge-small-zh-v1.5
 
 评论只能证明“读者提出了什么问题”，不能替代事实核验——这条边界会直接显示在界面与导出文件中。
 
+### 5. 可复现的运行轨迹与方案对比
+
+- 每次分析保存模型、聚类方法、步骤状态、输入数量与证据覆盖率；
+- 同一批评论同时运行关键词基线与当前语义方案，避免只展示“看起来不错”的结果；
+- 质量门槛明确区分机器检查与人工确认，不用一个虚构综合分掩盖问题。
+
+### 6. 多模型接入与项目生命周期
+
+- 内置规则基线开箱即用，也可接入 Ollama 或 OpenAI 兼容接口；
+- 密钥只通过后端环境变量读取，前端不保存真实 Token；
+- 模型配置支持连接测试、启用和停用；
+- 项目支持归档、回收站、恢复与永久删除；
+- “加载完整示例”会一次生成评论、主题、运行轨迹、方案对比与 Brief，方便快速验收。
+
 ## 产品与界面
 
 视觉不是套用后台模板，而是围绕“编辑研究档案”建立的原创设计系统：
 
 - 暖白纸张、黑色档案柜、钴蓝决策色；
 - 大字号编辑式标题与高密度证据表格；
-- 首页、项目概览、来源导入、数据检查、证据审阅、Brief 六类场景；
+- 首页、研究概览、来源导入、数据检查、证据审阅、运行轨迹、方案对比、模型中心与 Brief；
 - 移动端导航、键盘焦点、减少动画模式与空状态；
 - 页面切换使用 Motion，表格使用 TanStack Table，服务状态使用 TanStack Query。
 
@@ -150,7 +168,11 @@ ResearchProject
 │   └── ResearchTheme
 │       └── ThemeMembership → ResearchComment
 ├── ReviewEvent
-└── ResearchBrief
+├── ResearchBrief
+└── lifecycle: active / archived / trashed
+
+ModelProfile
+└── provider / endpoint / model / secret environment variable
 ```
 
 分析运行与主题分开保存，因此重新分析不会覆盖历史运行；界面只显示最近一次完成的主题集合。Embedding 以“评论 + 模型”做唯一缓存，重复运行不会插入重复向量。
@@ -185,12 +207,16 @@ npm run dev
 
 ### 最短体验路径
 
+最快体验：点击首页“加载完整示例”，即可查看一套包含 8 条评论、运行轨迹、方案对比与 Brief 的完整研究。
+
+真实项目路径：
+
 1. 点击“新建研究”，写下这次要解决的问题；
 2. 在“来源导入”粘贴 6 条以上真实评论；
 3. 在“数据检查”核对排除项；
 4. 在“洞察审阅”运行分析并查看原始证据；
-5. 确认至少一个主题；
-6. 生成内容 Brief 并导出 Word。
+5. 在“运行轨迹”和“方案对比”检查分析过程；
+6. 确认至少一个主题，生成内容 Brief 并导出 Word。
 
 ## 验证
 
@@ -201,7 +227,7 @@ py -3.12 -m pytest -q
 cd ..\frontend
 npm test -- --run
 npm run build
-npm audit --omit=dev
+npm run test:e2e
 ```
 
 浏览器验收脚本会建立本地案例、遍历关键页面、保存截图并检查控制台错误：
@@ -235,6 +261,10 @@ py -3.12 frontend/e2e/visual_review.py
 - [x] BGE Embedding 与本地离线向量基线
 - [x] Agglomerative / HDBSCAN 聚类
 - [x] 主题确认、驳回、合并、拆分与审阅事件
+- [x] Agent 运行轨迹与同数据方案对比
+- [x] Ollama / OpenAI 兼容模型接入与连接测试
+- [x] 项目归档、回收站、恢复与永久删除
+- [x] 一键生成可验收的完整示例
 - [x] Markdown / Word 导出
 - [x] 响应式高密度编辑工作台
 - [ ] 3–5 位内容从业者的可用性测试

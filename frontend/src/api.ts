@@ -4,6 +4,7 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
 
 export type Project = {
   id: number; name: string; goal: string; stage: string;
+  lifecycle?: "active" | "archived" | "trashed";
   comment_count?: number; created_at?: string; updated_at?: string;
 };
 export type Comment = {
@@ -23,6 +24,28 @@ export type Brief = {
 export type ImportReceipt = {
   source_id: number; created: number; duplicates: number; article_status: string;
   comments_status: string; warnings: string[];
+};
+export type AnalysisRun = {
+  id: number; status: string; model: string; method: string;
+  steps: { key: string; label: string; status: string; metrics: Record<string, number> }[];
+  metrics: {
+    comments: number; included: number; themes: number;
+    evidence_coverage: number; human_confirmation_rate: number;
+  };
+  human_gate: { required: boolean; confirmed: number; pending: number };
+};
+export type Benchmark = {
+  sample_size: number;
+  strategies: Record<string, {
+    label: string; model?: string; themes: number;
+    evidence_coverage: number; human_confirmation_rate: number;
+  }>;
+  note: string;
+};
+export type ModelProfile = {
+  id: number; name: string; provider: "rules" | "ollama" | "openai_compatible";
+  base_url: string; model: string; embedding_model: string; secret_env: string;
+  secret_configured: boolean; enabled: boolean;
 };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {

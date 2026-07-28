@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import io
+import os
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -8,7 +9,7 @@ from datetime import datetime, timezone
 from docx import Document
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 import httpx
 import trafilatura
@@ -17,6 +18,7 @@ from app.db import get_session
 from app.v2_models import (
     AnalysisRunV2,
     CommentEmbedding,
+    ModelProfile,
     ResearchBrief,
     ResearchComment,
     ResearchProject,
@@ -39,6 +41,30 @@ router = APIRouter(prefix="/api/v2", tags=["content-intelligence-v2"])
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     goal: str = Field(min_length=1, max_length=1000)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    goal: str | None = Field(default=None, min_length=1, max_length=1000)
+
+
+class ModelProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    provider: str = Field(pattern="^(rules|ollama|openai_compatible)$")
+    base_url: str = ""
+    model: str = ""
+    embedding_model: str = ""
+    secret_env: str = Field(default="", pattern=r"^[A-Z0-9_]*$")
+    enabled: bool = True
+
+
+class ModelProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    base_url: str | None = None
+    model: str | None = None
+    embedding_model: str | None = None
+    secret_env: str | None = Field(default=None, pattern=r"^[A-Z0-9_]*$")
+    enabled: bool | None = None
 
 
 class ManualImport(BaseModel):
@@ -95,6 +121,7 @@ def project_json(item: ResearchProject):
         "name": item.name,
         "goal": item.goal,
         "stage": item.stage,
+        "lifecycle": item.lifecycle,
         "created_at": item.created_at,
         "updated_at": item.updated_at,
     }
@@ -110,6 +137,20 @@ def comment_json(item: ResearchComment):
         "status": item.status,
         "exclusion_reasons": item.exclusion_reasons,
         "pii_flags": item.pii_flags,
+    }
+
+
+def model_profile_json(item: ModelProfile):
+    return {
+        "id": item.id,
+        "name": item.name,
+        "provider": item.provider,
+        "base_url": item.base_url,
+        "model": item.model,
+        "embedding_model": item.embedding_model,
+        "secret_env": item.secret_env,
+        "secret_configured": bool(item.secret_env and os.getenv(item.secret_env)),
+        "enabled": item.enabled,
     }
 
 
@@ -205,6 +246,70 @@ def extract_public_page(url: str):
     }
 
 
+@router.get("/model-profiles")
+def list_model_profiles(session: Session = Depends(get_session)):
+    items = session.scalars(select(ModelProfile).order_by(ModelProfile.id)).all()
+    return {"items": [model_profile_json(item) for item in items]}
+
+
+@router.post("/model-profiles", status_code=201)
+def create_model_profile(
+    payload: ModelProfileCreate, session: Session = Depends(get_session)
+):
+    if payload.provider != "rules" and not re.match(r"^https?://", payload.base_url):
+        raise HTTPException(422, "模型地址必须以 http:// 或 https:// 开头")
+    item = ModelProfile(**payload.model_dump())
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return model_profile_json(item)
+
+
+@router.patch("/model-profiles/{profile_id}")
+def update_model_profile(
+    profile_id: int,
+    payload: ModelProfileUpdate,
+    session: Session = Depends(get_session),
+):
+    item = session.get(ModelProfile, profile_id)
+    if item is None:
+        raise HTTPException(404, "模型配置不存在")
+    for key, value in payload.model_dump(exclude_none=True).items():
+        setattr(item, key, value)
+    session.commit()
+    session.refresh(item)
+    return model_profile_json(item)
+
+
+@router.post("/model-profiles/{profile_id}/test")
+def test_model_profile(profile_id: int, session: Session = Depends(get_session)):
+    item = session.get(ModelProfile, profile_id)
+    if item is None:
+        raise HTTPException(404, "模型配置不存在")
+    if item.provider == "rules":
+        return {"ok": True, "models": [item.model or "deterministic-v1"], "message": "内置规则可用"}
+
+    headers = {}
+    if item.secret_env:
+        secret = os.getenv(item.secret_env)
+        if not secret:
+            return {"ok": False, "models": [], "message": f"环境变量 {item.secret_env} 尚未配置"}
+        headers["Authorization"] = f"Bearer {secret}"
+    path = "/api/tags" if item.provider == "ollama" else "/models"
+    try:
+        with httpx.Client(timeout=3.5) as client:
+            result = client.get(f"{item.base_url.rstrip('/')}{path}", headers=headers)
+            result.raise_for_status()
+            body = result.json()
+        if item.provider == "ollama":
+            models = [model.get("name", "") for model in body.get("models", [])]
+        else:
+            models = [model.get("id", "") for model in body.get("data", [])]
+        return {"ok": True, "models": [name for name in models if name], "message": "连接成功"}
+    except (httpx.HTTPError, ValueError) as exc:
+        return {"ok": False, "models": [], "message": f"连接失败：{type(exc).__name__}"}
+
+
 @router.post("/projects", status_code=201)
 def create_project(payload: ProjectCreate, session: Session = Depends(get_session)):
     item = ResearchProject(name=payload.name, goal=payload.goal)
@@ -214,12 +319,148 @@ def create_project(payload: ProjectCreate, session: Session = Depends(get_sessio
     return project_json(item)
 
 
+@router.post("/demo/bootstrap", status_code=201)
+def bootstrap_demo(response: Response, session: Session = Depends(get_session)):
+    marker = "完整示例 · 端午报道评论研究"
+    existing = session.scalar(
+        select(ResearchProject).where(ResearchProject.name == marker)
+    )
+    if existing is not None:
+        response.status_code = 200
+        return {"project_id": existing.id, "created": False}
+
+    project = ResearchProject(
+        name=marker,
+        goal="从读者原话中发现最值得继续解释的问题",
+        stage="draft",
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    source = ResearchSource(
+        project_id=project.id,
+        kind="demo",
+        title="端午活动公开评论示例",
+        article_status="provided",
+        comments_status="success",
+    )
+    session.add(source)
+    session.commit()
+    session.refresh(source)
+    add_comments(
+        session,
+        project.id,
+        source.id,
+        [
+            "什么时候可以报名？",
+            "报名入口在哪里？",
+            "需要准备什么材料？",
+            "老人可以参加吗？",
+            "活动具体在哪个地方举行？",
+            "有没有明确的开始时间？",
+            "可以带孩子一起参加吗？",
+            "费用是多少？",
+        ],
+    )
+    analyze_project(project.id, AnalysisRequest(mode="preview"), session)
+    themes = session.scalars(
+        select(ResearchTheme)
+        .where(ResearchTheme.project_id == project.id)
+        .order_by(ResearchTheme.id)
+    ).all()
+    for theme in themes[:2]:
+        theme.status = "confirmed"
+    session.commit()
+    create_brief(project.id, BriefRequest(), session)
+    return {"project_id": project.id, "created": True}
+
+
 @router.get("/projects")
-def list_projects(session: Session = Depends(get_session)):
+def list_projects(
+    lifecycle: str = "active", session: Session = Depends(get_session)
+):
     items = session.scalars(
-        select(ResearchProject).order_by(ResearchProject.updated_at.desc())
+        select(ResearchProject)
+        .where(ResearchProject.lifecycle == lifecycle)
+        .order_by(ResearchProject.updated_at.desc())
     ).all()
     return {"items": [project_json(item) for item in items]}
+
+
+@router.patch("/projects/{project_id}")
+def update_project(
+    project_id: int, payload: ProjectUpdate, session: Session = Depends(get_session)
+):
+    item = session.get(ResearchProject, project_id)
+    if item is None:
+        raise HTTPException(404, "研究项目不存在")
+    if payload.name is not None:
+        item.name = payload.name
+    if payload.goal is not None:
+        item.goal = payload.goal
+    item.updated_at = utc_now()
+    session.commit()
+    session.refresh(item)
+    return project_json(item)
+
+
+def set_project_lifecycle(project_id: int, lifecycle: str, session: Session):
+    item = session.get(ResearchProject, project_id)
+    if item is None:
+        raise HTTPException(404, "研究项目不存在")
+    item.lifecycle = lifecycle
+    item.updated_at = utc_now()
+    session.commit()
+    session.refresh(item)
+    return project_json(item)
+
+
+@router.post("/projects/{project_id}/archive")
+def archive_project(project_id: int, session: Session = Depends(get_session)):
+    return set_project_lifecycle(project_id, "archived", session)
+
+
+@router.post("/projects/{project_id}/trash")
+def trash_project(project_id: int, session: Session = Depends(get_session)):
+    return set_project_lifecycle(project_id, "trashed", session)
+
+
+@router.post("/projects/{project_id}/restore")
+def restore_project(project_id: int, session: Session = Depends(get_session)):
+    return set_project_lifecycle(project_id, "active", session)
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+def delete_project(
+    project_id: int,
+    permanent: bool = False,
+    session: Session = Depends(get_session),
+):
+    item = session.get(ResearchProject, project_id)
+    if item is None:
+        raise HTTPException(404, "研究项目不存在")
+    if not permanent:
+        item.lifecycle = "trashed"
+        session.commit()
+        return Response(status_code=204)
+
+    comment_ids = select(ResearchComment.id).where(
+        ResearchComment.project_id == project_id
+    )
+    theme_ids = select(ResearchTheme.id).where(
+        ResearchTheme.project_id == project_id
+    )
+    session.execute(delete(CommentEmbedding).where(CommentEmbedding.comment_id.in_(comment_ids)))
+    session.execute(delete(ThemeMembership).where(ThemeMembership.theme_id.in_(theme_ids)))
+    session.execute(delete(ReviewEvent).where(ReviewEvent.project_id == project_id))
+    session.execute(delete(ResearchBrief).where(ResearchBrief.project_id == project_id))
+    session.execute(delete(ResearchTheme).where(ResearchTheme.project_id == project_id))
+    session.execute(delete(AnalysisRunV2).where(AnalysisRunV2.project_id == project_id))
+    session.execute(delete(ResearchComment).where(ResearchComment.project_id == project_id))
+    session.execute(delete(ResearchSource).where(ResearchSource.project_id == project_id))
+    session.delete(item)
+    session.commit()
+    return Response(status_code=204)
 
 
 @router.get("/projects/{project_id}")
@@ -538,6 +779,180 @@ def analyze_project(
         "embedding_model": run.embedding_model,
         "clustering_method": run.clustering_method,
         "themes": [theme_json(item, session) for item in themes],
+    }
+
+
+@router.get("/projects/{project_id}/analysis-runs")
+def list_analysis_runs(project_id: int, session: Session = Depends(get_session)):
+    if session.get(ResearchProject, project_id) is None:
+        raise HTTPException(404, "研究项目不存在")
+    runs = session.scalars(
+        select(AnalysisRunV2)
+        .where(AnalysisRunV2.project_id == project_id)
+        .order_by(AnalysisRunV2.id.desc())
+    ).all()
+    total = session.scalar(
+        select(func.count(ResearchComment.id)).where(
+            ResearchComment.project_id == project_id
+        )
+    ) or 0
+    included = session.scalar(
+        select(func.count(ResearchComment.id)).where(
+            ResearchComment.project_id == project_id,
+            ResearchComment.status == "included",
+        )
+    ) or 0
+    excluded = total - included
+    items = []
+    for run in runs:
+        themes = session.scalars(
+            select(ResearchTheme).where(ResearchTheme.analysis_run_id == run.id)
+        ).all()
+        theme_ids = [theme.id for theme in themes]
+        evidence_count = 0
+        if theme_ids:
+            evidence_count = session.scalar(
+                select(func.count(func.distinct(ThemeMembership.comment_id))).where(
+                    ThemeMembership.theme_id.in_(theme_ids)
+                )
+            ) or 0
+        confirmed = sum(theme.status == "confirmed" for theme in themes)
+        coverage = round(evidence_count / included, 3) if included else 0.0
+        items.append(
+            {
+                "id": run.id,
+                "status": run.status,
+                "started_at": run.started_at,
+                "completed_at": run.completed_at,
+                "model": run.embedding_model,
+                "method": run.clustering_method,
+                "steps": [
+                    {
+                        "key": "collect",
+                        "label": "采集 Agent",
+                        "status": "completed",
+                        "metrics": {"received": total},
+                    },
+                    {
+                        "key": "clean",
+                        "label": "整理 Agent",
+                        "status": "completed",
+                        "metrics": {"included": included, "excluded": excluded},
+                    },
+                    {
+                        "key": "cluster",
+                        "label": "洞察 Agent",
+                        "status": run.status,
+                        "metrics": {
+                            "themes": len(themes),
+                            "evidence_links": evidence_count,
+                        },
+                    },
+                    {
+                        "key": "verify",
+                        "label": "核查 Agent",
+                        "status": "completed" if coverage == 1 else "attention",
+                        "metrics": {"evidence_coverage": coverage},
+                    },
+                ],
+                "metrics": {
+                    "comments": total,
+                    "included": included,
+                    "themes": len(themes),
+                    "evidence_coverage": coverage,
+                    "human_confirmation_rate": (
+                        round(confirmed / len(themes), 3) if themes else 0.0
+                    ),
+                },
+                "human_gate": {
+                    "required": True,
+                    "confirmed": confirmed,
+                    "pending": len(themes) - confirmed,
+                },
+            }
+        )
+    return {"items": items}
+
+
+@router.get("/projects/{project_id}/benchmark")
+def project_benchmark(project_id: int, session: Session = Depends(get_session)):
+    if session.get(ResearchProject, project_id) is None:
+        raise HTTPException(404, "研究项目不存在")
+    comments = session.scalars(
+        select(ResearchComment).where(
+            ResearchComment.project_id == project_id,
+            ResearchComment.status == "included",
+        )
+    ).all()
+    baseline_groups: set[str] = set()
+    baseline_matched = 0
+    for comment in comments:
+        match = next(
+            (
+                name
+                for name, words in THEMES.items()
+                if any(word in comment.cleaned_text for word in words)
+            ),
+            None,
+        )
+        if match:
+            baseline_groups.add(match)
+            baseline_matched += 1
+    latest_run = session.scalar(
+        select(AnalysisRunV2)
+        .where(
+            AnalysisRunV2.project_id == project_id,
+            AnalysisRunV2.status == "completed",
+        )
+        .order_by(AnalysisRunV2.id.desc())
+    )
+    latest_themes = []
+    latest_evidence = 0
+    latest_confirmed = 0
+    if latest_run is not None:
+        latest_themes = session.scalars(
+            select(ResearchTheme).where(
+                ResearchTheme.analysis_run_id == latest_run.id
+            )
+        ).all()
+        theme_ids = [theme.id for theme in latest_themes]
+        if theme_ids:
+            latest_evidence = session.scalar(
+                select(func.count(func.distinct(ThemeMembership.comment_id))).where(
+                    ThemeMembership.theme_id.in_(theme_ids)
+                )
+            ) or 0
+        latest_confirmed = sum(theme.status == "confirmed" for theme in latest_themes)
+    total = len(comments)
+    return {
+        "strategies": [
+            {
+                "key": "keyword_baseline",
+                "label": "关键词规则基线",
+                "model": "无模型",
+                "themes": len(baseline_groups),
+                "evidence_coverage": (
+                    round(baseline_matched / total, 3) if total else 0.0
+                ),
+                "human_confirmation_rate": 0.0,
+            },
+            {
+                "key": "latest_analysis",
+                "label": "当前分析方案",
+                "model": latest_run.embedding_model if latest_run else "尚未运行",
+                "themes": len(latest_themes),
+                "evidence_coverage": (
+                    round(latest_evidence / total, 3) if total else 0.0
+                ),
+                "human_confirmation_rate": (
+                    round(latest_confirmed / len(latest_themes), 3)
+                    if latest_themes
+                    else 0.0
+                ),
+            },
+        ],
+        "sample_size": total,
+        "note": "结果来自当前项目数据，不代表通用模型准确率。",
     }
 
 

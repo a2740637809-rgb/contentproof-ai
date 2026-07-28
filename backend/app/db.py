@@ -44,6 +44,9 @@ def ensure_prototype_columns() -> None:
             "completed_at": "DATETIME",
             "elapsed_ms": "INTEGER",
         },
+        "research_projects": {
+            "lifecycle": "VARCHAR NOT NULL DEFAULT 'active'",
+        },
     }
     with engine.begin() as connection:
         for table, columns in additions.items():

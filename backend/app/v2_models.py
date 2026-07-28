@@ -17,6 +17,7 @@ class ResearchProject(Base):
     name: Mapped[str] = mapped_column(String(160))
     goal: Mapped[str] = mapped_column(Text)
     stage: Mapped[str] = mapped_column(default="draft", index=True)
+    lifecycle: Mapped[str] = mapped_column(default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
 
@@ -135,4 +136,18 @@ class ResearchBrief(Base):
     evidence_comment_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     theme_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     generation_mode: Mapped[str] = mapped_column(default="deterministic_fallback")
+    created_at: Mapped[datetime] = mapped_column(default=utc_now)
+
+
+class ModelProfile(Base):
+    __tablename__ = "model_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    provider: Mapped[str] = mapped_column(String(40))
+    base_url: Mapped[str] = mapped_column(default="")
+    model: Mapped[str] = mapped_column(default="")
+    embedding_model: Mapped[str] = mapped_column(default="")
+    secret_env: Mapped[str] = mapped_column(default="")
+    enabled: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(default=utc_now)

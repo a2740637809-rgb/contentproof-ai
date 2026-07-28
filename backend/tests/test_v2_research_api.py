@@ -12,6 +12,88 @@ def create_project(client):
     return response.json()
 
 
+def test_project_can_be_renamed_archived_trashed_restored_and_deleted(client):
+    project = create_project(client)
+    project_id = project["id"]
+
+    renamed = client.patch(
+        f"/api/v2/projects/{project_id}",
+        json={"name": "更新后的研究", "goal": "验证项目生命周期"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "更新后的研究"
+
+    archived = client.post(f"/api/v2/projects/{project_id}/archive")
+    assert archived.status_code == 200
+    assert archived.json()["lifecycle"] == "archived"
+
+    trashed = client.post(f"/api/v2/projects/{project_id}/trash")
+    assert trashed.status_code == 200
+    assert trashed.json()["lifecycle"] == "trashed"
+    assert client.get("/api/v2/projects").json()["items"] == []
+    assert client.get("/api/v2/projects?lifecycle=trashed").json()["items"][0]["id"] == project_id
+
+    restored = client.post(f"/api/v2/projects/{project_id}/restore")
+    assert restored.status_code == 200
+    assert restored.json()["lifecycle"] == "active"
+
+    deleted = client.delete(f"/api/v2/projects/{project_id}?permanent=true")
+    assert deleted.status_code == 204
+    assert client.get(f"/api/v2/projects/{project_id}").status_code == 404
+
+
+def test_demo_bootstrap_is_idempotent_and_contains_complete_research(client):
+    first = client.post("/api/v2/demo/bootstrap")
+    second = client.post("/api/v2/demo/bootstrap")
+
+    assert first.status_code == 201
+    assert second.status_code == 200
+    assert first.json()["project_id"] == second.json()["project_id"]
+    assert first.json()["created"] is True
+    assert second.json()["created"] is False
+
+    project_id = first.json()["project_id"]
+    comments = client.get(f"/api/v2/projects/{project_id}/comments").json()
+    runs = client.get(f"/api/v2/projects/{project_id}/analysis-runs").json()
+    benchmark = client.get(f"/api/v2/projects/{project_id}/benchmark").json()
+    briefs = client.get(f"/api/v2/projects/{project_id}/briefs").json()
+    assert comments["total"] == 8
+    assert runs["items"]
+    assert len(benchmark["strategies"]) == 2
+    assert briefs["items"]
+
+
+def test_model_profiles_can_be_managed_and_tested_without_exposing_secrets(client):
+    created = client.post(
+        "/api/v2/model-profiles",
+        json={
+            "name": "本地规则基线",
+            "provider": "rules",
+            "base_url": "",
+            "model": "deterministic-v1",
+            "embedding_model": "browser-rules",
+            "secret_env": "CONTENT_LAB_TEST_KEY",
+            "enabled": True,
+        },
+    )
+    assert created.status_code == 201
+    profile = created.json()
+    assert "api_key" not in profile
+    assert profile["secret_configured"] is False
+
+    tested = client.post(f"/api/v2/model-profiles/{profile['id']}/test")
+    assert tested.status_code == 200
+    assert tested.json()["ok"] is True
+    assert tested.json()["models"] == ["deterministic-v1"]
+
+    disabled = client.patch(
+        f"/api/v2/model-profiles/{profile['id']}", json={"enabled": False}
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["enabled"] is False
+    assert client.get("/api/v2/model-profiles").json()["items"]
+
+
 def test_project_import_clean_analyze_review_and_export(client):
     project = create_project(client)
     project_id = project["id"]
@@ -109,6 +191,65 @@ def test_brief_requires_confirmed_theme(client):
     response = client.post(f"/api/v2/projects/{project_id}/briefs", json={})
     assert response.status_code == 409
     assert "确认" in response.json()["detail"]
+
+
+def test_analysis_run_exposes_agent_trace_and_reproducible_metrics(client):
+    project_id = create_project(client)["id"]
+    client.post(
+        f"/api/v2/projects/{project_id}/imports/manual",
+        json={
+            "comments": [
+                "什么时候报名？",
+                "报名入口在哪里？",
+                "需要准备什么材料？",
+                "广告加微信abc123",
+            ]
+        },
+    )
+    created = client.post(f"/api/v2/projects/{project_id}/analysis", json={})
+    assert created.status_code == 201
+
+    response = client.get(f"/api/v2/projects/{project_id}/analysis-runs")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"][0]["status"] == "completed"
+    assert [step["key"] for step in payload["items"][0]["steps"]] == [
+        "collect",
+        "clean",
+        "cluster",
+        "verify",
+    ]
+    assert payload["items"][0]["steps"][1]["metrics"]["excluded"] == 1
+    assert payload["items"][0]["metrics"]["evidence_coverage"] == 1.0
+    assert payload["items"][0]["human_gate"]["required"] is True
+
+
+def test_benchmark_compares_methods_using_observed_project_data(client):
+    project_id = create_project(client)["id"]
+    client.post(
+        f"/api/v2/projects/{project_id}/imports/manual",
+        json={
+            "comments": [
+                "什么时候报名？",
+                "报名入口在哪里？",
+                "需要准备什么材料？",
+                "现场停车方便吗？",
+            ]
+        },
+    )
+    client.post(f"/api/v2/projects/{project_id}/analysis", json={})
+
+    response = client.get(f"/api/v2/projects/{project_id}/benchmark")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["key"] for item in payload["strategies"]] == [
+        "keyword_baseline",
+        "latest_analysis",
+    ]
+    assert all(0 <= item["evidence_coverage"] <= 1 for item in payload["strategies"])
+    assert payload["note"] == "结果来自当前项目数据，不代表通用模型准确率。"
 
 
 def test_theme_merge_split_and_move_preserve_evidence(client):
