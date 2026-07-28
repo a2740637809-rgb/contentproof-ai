@@ -1,20 +1,31 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-test("visitor turns editable evidence into a traceable brief", async ({ page }) => {
+async function openSection(page: Page, name: string) {
+  const mobileMenu = page.getByRole("button", { name: "打开导航" });
+  if (await mobileMenu.isVisible()) await mobileMenu.click();
+  await page.getByRole("button", { name: new RegExp(name) }).click();
+}
+
+test("visitor opens a complete evidence-led research workflow", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /从零散反馈/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /从读者原话/ })).toBeVisible();
 
-  await page.getByLabel("反馈内容").fill("文章事实写错了，我需要看到原始来源。");
-  await page.getByRole("button", { name: "加入证据" }).click();
-  await page.getByRole("button", { name: /分析 6 条证据/ }).click();
+  await page.getByRole("button", { name: "加载完整示例" }).click();
+  await expect(page.getByRole("heading", { name: "今天需要做出的编辑判断" })).toBeVisible();
+  await expect(page.getByText("原始评论").first()).toBeVisible();
 
-  await expect(page.getByRole("heading", { name: "事实可信" })).toBeVisible();
-  await expect(page.locator(".rationale")).toContainText("命中");
-  await page.getByRole("button", { name: /生成内容简报/ }).click();
+  await openSection(page, "运行轨迹");
+  await expect(page.getByRole("heading", { name: "AI 如何得出这些主题" })).toBeVisible();
+  await expect(page.getByText(/RUN-\d+/)).toBeVisible();
 
-  await expect(page.getByRole("heading", { name: "内容简报" })).toBeVisible();
-  await expect(page.getByText("原始证据 / 2")).toBeVisible();
-  await expect(page.getByText(/当前公开演示使用规则基线/)).toBeVisible();
+  await openSection(page, "方案对比");
+  await expect(page.getByRole("heading", { name: "哪种分析方法更值得采用" })).toBeVisible();
+  await expect(page.getByText("BASELINE / 基线")).toBeVisible();
+  await expect(page.getByText("CURRENT / 当前方案")).toBeVisible();
+
+  await openSection(page, "模型中心");
+  await expect(page.getByRole("heading", { name: "选择谁来完成分析" })).toBeVisible();
+  await expect(page.getByText("密钥不进入浏览器")).toBeVisible();
 
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,

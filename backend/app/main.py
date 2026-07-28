@@ -10,6 +10,8 @@ from app.api.tasks import router as tasks_router
 from app.api.tasks import runs_router
 from app.db import Base, engine, ensure_prototype_columns
 from app import models  # noqa: F401
+from app import v2_models  # noqa: F401
+from app.v2_api import router as content_intelligence_router
 
 
 def create_app() -> FastAPI:
@@ -22,7 +24,10 @@ def create_app() -> FastAPI:
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173"],
+        allow_origins=[
+            "http://localhost:5173", "http://127.0.0.1:5173",
+            "http://localhost:5174", "http://127.0.0.1:5174",
+        ],
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -36,6 +41,7 @@ def create_app() -> FastAPI:
     app.include_router(prompts_router)
     app.include_router(signals_router)
     app.include_router(signals_v2_router)
+    app.include_router(content_intelligence_router)
     return app
 
 
