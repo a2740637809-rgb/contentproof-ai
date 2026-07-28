@@ -1,6 +1,9 @@
 import { analyzeEvidence, type EvidenceItem, type Signal } from "./lib/analyzer";
+import { publicDemoApi } from "./publicDemo";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000/api";
+const PUBLIC_DEMO = import.meta.env.VITE_PUBLIC_DEMO === "true"
+  || (typeof window !== "undefined" && window.location.hostname.endsWith("github.io"));
 
 export type Project = {
   id: number; name: string; goal: string; stage: string;
@@ -49,6 +52,7 @@ export type ModelProfile = {
 };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  if (PUBLIC_DEMO) return publicDemoApi(path, init) as Promise<T>;
   const multipart = init?.body instanceof FormData;
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,

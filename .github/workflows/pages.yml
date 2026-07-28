@@ -44,6 +44,8 @@ jobs:
       - run: npm ci
       - run: npm test -- --run
       - run: npm run build -- --base /contentproof-ai/
+        env:
+          VITE_PUBLIC_DEMO: "true"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
